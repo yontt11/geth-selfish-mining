@@ -478,6 +478,14 @@ var (
 		Name:  "miner.noverify",
 		Usage: "Disable remote sealing verification",
 	}
+	MinerStrategyFlag = cli.IntFlag{
+		Name: "miner.strategy",
+		Usage: "Specify what strategy the miner should use\n" +
+			"0=honest\n" +
+			"1=selfish without inclusion of uncle blocks\n" +
+			"2=selfish with inclusion of own uncle blocks\n" +
+			"3=selfish with inclusion of all uncle blocks\n",
+		Value: 0}
 	// Account settings
 	UnlockedAccountFlag = cli.StringFlag{
 		Name:  "unlock",
@@ -1402,6 +1410,9 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	}
 	if ctx.GlobalIsSet(MinerNoVerifyFlag.Name) {
 		cfg.Noverify = ctx.GlobalBool(MinerNoVerifyFlag.Name)
+	}
+	if ctx.GlobalIsSet(MinerStrategyFlag.Name) {
+		cfg.MinerStrategy = miner.Strategy(ctx.GlobalInt(MinerNotifyFlag.Name))
 	}
 	if ctx.GlobalIsSet(LegacyMinerGasTargetFlag.Name) {
 		log.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")
