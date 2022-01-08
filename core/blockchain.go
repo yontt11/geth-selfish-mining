@@ -213,6 +213,37 @@ type BlockChain struct {
 
 func (bc *BlockChain) Copy(toCopy *BlockChain) {
 
+	// todo copy db
+	// todo copy snaps
+	// todo copy triegc
+
+	bc.gcproc = toCopy.gcproc
+	bc.txLookupLimit = toCopy.txLookupLimit
+
+	// todo copy header chain
+
+	bc.genesisBlock = toCopy.genesisBlock
+	bc.currentBlock = toCopy.currentBlock
+	bc.currentFastBlock = toCopy.currentFastBlock
+
+	// todo copy state database
+
+	emptyCache(bc.bodyCache)
+	emptyCache(bc.bodyRLPCache)
+	emptyCache(bc.receiptsCache)
+	emptyCache(bc.blockCache)
+	emptyCache(bc.txLookupCache)
+	emptyCache(bc.futureBlocks)
+}
+
+func emptyCache(cache *lru.Cache) {
+	for {
+		fmt.Println("#-# cache length ", cache.Len())
+		if cache.Len() == 0 {
+			break
+		}
+		cache.RemoveOldest()
+	}
 }
 
 // NewBlockChain returns a fully initialised block chain using information
