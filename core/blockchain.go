@@ -20,6 +20,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	node2 "github.com/ethereum/go-ethereum/node"
 	"io"
 	"math/big"
 	"sort"
@@ -212,9 +213,11 @@ type BlockChain struct {
 }
 
 func (bc *BlockChain) Copy(toCopy *BlockChain) {
+	db := bc.db.(*node2.CloseTrackingDB)
+	toCopyDB := toCopy.db.(*node2.CloseTrackingDB)
+	db.Copy(toCopyDB)
 
-	// todo copy db
-	// todo copy snaps
+	bc.snaps.Copy(toCopy.snaps)
 
 	bc.triegc.Copy(toCopy.triegc)
 	bc.gcproc = toCopy.gcproc

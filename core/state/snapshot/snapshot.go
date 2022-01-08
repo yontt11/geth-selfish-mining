@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/node"
 	"sync"
 	"sync/atomic"
 
@@ -166,6 +167,17 @@ type Tree struct {
 
 	// Test hooks
 	onFlatten func() // Hook invoked when the bottom most diff layers are flattened
+}
+
+func (t *Tree) Copy(toCopy *Tree) {
+	diskDB := t.diskdb.(*node.CloseTrackingDB)
+	toCopyDiskDB := toCopy.diskdb.(*node.CloseTrackingDB)
+
+	diskDB.Copy(toCopyDiskDB)
+
+	t.triedb.Copy(toCopy.triedb)
+	t.cache = toCopy.cache
+	t.layers = toCopy.layers
 }
 
 // New attempts to load an already existing snapshot from a persistent key-value

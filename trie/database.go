@@ -19,6 +19,7 @@ package trie
 import (
 	"errors"
 	"fmt"
+	node2 "github.com/ethereum/go-ethereum/node"
 	"io"
 	"reflect"
 	"runtime"
@@ -89,6 +90,32 @@ type Database struct {
 	preimagesSize common.StorageSize // Storage size of the preimages cache
 
 	lock sync.RWMutex
+}
+
+func (db *Database) Copy(toCopy *Database) {
+	diskDB := db.diskdb.(*node2.CloseTrackingDB)
+	toCopyDiskDB := toCopy.diskdb.(*node2.CloseTrackingDB)
+
+	diskDB.Copy(toCopyDiskDB)
+
+	db.cleans.Reset()
+	db.dirties = toCopy.dirties
+	db.oldest = toCopy.oldest
+	db.newest = toCopy.newest
+
+	db.preimages = toCopy.preimages
+
+	db.gctime = toCopy.gctime
+	db.gcnodes = toCopy.gcnodes
+	db.gcsize = toCopy.gcsize
+
+	db.flushtime = toCopy.flushtime
+	db.flushnodes = toCopy.flushnodes
+	db.flushsize = toCopy.flushsize
+
+	db.dirtiesSize = toCopy.dirtiesSize
+	db.childrenSize = toCopy.childrenSize
+	db.preimagesSize = toCopy.preimagesSize
 }
 
 // rawNode is a simple binary blob used to differentiate between collapsed trie

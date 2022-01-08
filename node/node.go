@@ -621,6 +621,13 @@ type closeTrackingDB struct {
 	n *Node
 }
 
+// makes data type public
+type CloseTrackingDB closeTrackingDB
+
+func (db *CloseTrackingDB) Copy(toCopy *CloseTrackingDB) {
+	// todo
+}
+
 func (db *closeTrackingDB) Close() error {
 	db.n.lock.Lock()
 	delete(db.n.databases, db)
