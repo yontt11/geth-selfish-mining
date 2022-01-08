@@ -226,7 +226,11 @@ func (bc *BlockChain) Copy(toCopy *BlockChain) {
 	bc.currentBlock = toCopy.currentBlock
 	bc.currentFastBlock = toCopy.currentFastBlock
 
-	// todo copy state database
+	bc.stateCache = state.NewDatabaseWithConfig(bc.db, &trie.Config{
+		Cache:     bc.cacheConfig.TrieCleanLimit,
+		Journal:   bc.cacheConfig.TrieCleanJournal,
+		Preimages: bc.cacheConfig.Preimages,
+	})
 
 	emptyCache(bc.bodyCache)
 	emptyCache(bc.bodyRLPCache)
