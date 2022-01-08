@@ -73,6 +73,18 @@ type HeaderChain struct {
 	engine consensus.Engine
 }
 
+func (hc *HeaderChain) Copy(toCopy *HeaderChain) {
+	// todo copy chain db
+
+	hc.genesisHeader = toCopy.genesisHeader
+	hc.currentHeader = toCopy.currentHeader
+	hc.currentHeaderHash = toCopy.currentHeaderHash
+
+	EmptyCache(hc.headerCache)
+	EmptyCache(hc.tdCache)
+	EmptyCache(hc.numberCache)
+}
+
 // NewHeaderChain creates a new HeaderChain structure. ProcInterrupt points
 // to the parent's interrupt semaphore.
 func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine consensus.Engine, procInterrupt func() bool) (*HeaderChain, error) {

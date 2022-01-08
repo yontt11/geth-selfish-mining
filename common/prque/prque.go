@@ -26,6 +26,10 @@ type Prque struct {
 	cont *sstack
 }
 
+func (p *Prque) Copy(toCopy *Prque) {
+	p.cont.Copy(toCopy.cont)
+}
+
 // New creates a new priority queue.
 func New(setIndex SetIndexCallback) *Prque {
 	return &Prque{newSstack(setIndex, false)}

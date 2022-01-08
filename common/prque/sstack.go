@@ -41,6 +41,15 @@ type sstack struct {
 	active []*item
 }
 
+func (s *sstack) Copy(toCopy *sstack) {
+	s.size = toCopy.size
+	s.capacity = toCopy.capacity
+	s.offset = toCopy.offset
+	s.wrapAround = toCopy.wrapAround
+	s.blocks = toCopy.blocks
+	s.active = toCopy.active
+}
+
 // Creates a new, empty stack.
 func newSstack(setIndex SetIndexCallback, wrapAround bool) *sstack {
 	result := new(sstack)

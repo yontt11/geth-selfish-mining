@@ -215,12 +215,12 @@ func (bc *BlockChain) Copy(toCopy *BlockChain) {
 
 	// todo copy db
 	// todo copy snaps
-	// todo copy triegc
 
+	bc.triegc.Copy(toCopy.triegc)
 	bc.gcproc = toCopy.gcproc
 	bc.txLookupLimit = toCopy.txLookupLimit
 
-	// todo copy header chain
+	bc.hc.Copy(toCopy.hc)
 
 	bc.genesisBlock = toCopy.genesisBlock
 	bc.currentBlock = toCopy.currentBlock
@@ -232,15 +232,15 @@ func (bc *BlockChain) Copy(toCopy *BlockChain) {
 		Preimages: bc.cacheConfig.Preimages,
 	})
 
-	emptyCache(bc.bodyCache)
-	emptyCache(bc.bodyRLPCache)
-	emptyCache(bc.receiptsCache)
-	emptyCache(bc.blockCache)
-	emptyCache(bc.txLookupCache)
-	emptyCache(bc.futureBlocks)
+	EmptyCache(bc.bodyCache)
+	EmptyCache(bc.bodyRLPCache)
+	EmptyCache(bc.receiptsCache)
+	EmptyCache(bc.blockCache)
+	EmptyCache(bc.txLookupCache)
+	EmptyCache(bc.futureBlocks)
 }
 
-func emptyCache(cache *lru.Cache) {
+func EmptyCache(cache *lru.Cache) {
 	for {
 		fmt.Println("#-# cache length ", cache.Len())
 		if cache.Len() == 0 {
