@@ -389,3 +389,33 @@ func (b *Block) Hash() common.Hash {
 }
 
 type Blocks []*Block
+
+func (blocks *Blocks) Append(block *Block) *Blocks {
+	blocksData := *blocks
+	blocksData = append(blocksData, block)
+	return &blocksData
+}
+
+func (blocks *Blocks) Clear() {
+	*blocks = nil
+}
+
+func (blocks *Blocks) Length() int {
+	return len(*blocks)
+}
+
+func (blocks *Blocks) RemoveIndex(index int) *Blocks {
+	blocksData := *blocks
+	blocksData = append(blocksData[:index], blocksData[index+1:]...)
+	return &blocksData
+}
+
+func (blocks *Blocks) First() *Block {
+	blocksData := *blocks
+	return blocksData[0]
+}
+
+func (blocks *Blocks) Last() *Block {
+	blocksData := *blocks
+	return blocksData[len(blocksData)-1]
+}

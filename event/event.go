@@ -20,6 +20,8 @@ package event
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/types"
 	"reflect"
 	"sync"
 	"time"
@@ -42,6 +44,10 @@ type TypeMux struct {
 	mutex   sync.RWMutex
 	subm    map[reflect.Type][]*TypeMuxSubscription
 	stopped bool
+}
+
+func (mux *TypeMux) PublishBlock(block *types.Block) {
+	mux.Post(core.NewMinedBlockEvent{Block: block})
 }
 
 // ErrMuxClosed is returned when Posting on a closed TypeMux.

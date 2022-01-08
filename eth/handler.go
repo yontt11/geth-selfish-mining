@@ -18,6 +18,8 @@ package eth
 
 import (
 	"errors"
+	"fmt"
+	"github.com/ethereum/go-ethereum/miner"
 	"math"
 	"math/big"
 	"sync"
@@ -77,16 +79,20 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	Database   ethdb.Database            // Database for direct sync insertions
-	Chain      *core.BlockChain          // Blockchain to serve data from
-	TxPool     txPool                    // Transaction pool to propagate from
-	Merger     *consensus.Merger         // The manager for eth1/2 transition
-	Network    uint64                    // Network identifier to adfvertise
-	Sync       downloader.SyncMode       // Whether to snap or full sync
-	BloomCache uint64                    // Megabytes to alloc for snap sync bloom
-	EventMux   *event.TypeMux            // Legacy event mux, deprecate for `feed`
-	Checkpoint *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
-	Whitelist  map[uint64]common.Hash    // Hard coded whitelist for sync challenged
+	Database                 ethdb.Database   // Database for direct sync insertions
+	Chain                    *core.BlockChain // Blockchain to serve data from
+	PrivateChain             *core.BlockChain
+	UnpublishedPrivateBlocks *types.Blocks
+	PrivateBranchLength      *int
+	MinerStrategy            miner.Strategy
+	TxPool                   txPool                    // Transaction pool to propagate from
+	Merger                   *consensus.Merger         // The manager for eth1/2 transition
+	Network                  uint64                    // Network identifier to adfvertise
+	Sync                     downloader.SyncMode       // Whether to snap or full sync
+	BloomCache               uint64                    // Megabytes to alloc for snap sync bloom
+	EventMux                 *event.TypeMux            // Legacy event mux, deprecate for `feed`
+	Checkpoint               *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
+	Whitelist                map[uint64]common.Hash    // Hard coded whitelist for sync challenged
 }
 
 type handler struct {
@@ -99,9 +105,14 @@ type handler struct {
 	checkpointNumber uint64      // Block number for the sync progress validator to cross reference
 	checkpointHash   common.Hash // Block hash for the sync progress validator to cross reference
 
-	database ethdb.Database
-	txpool   txPool
-	chain    *core.BlockChain
+	database                 ethdb.Database
+	txpool                   txPool
+	chain                    *core.BlockChain
+	privateChain             *core.BlockChain
+	unpublishedPrivateBlocks *types.Blocks
+	privateBranchLength      *int
+	minerStrategy            miner.Strategy
+
 	maxPeers int
 
 	downloader   *downloader.Downloader
@@ -131,18 +142,24 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	if config.EventMux == nil {
 		config.EventMux = new(event.TypeMux) // Nicety initialization for tests
 	}
+
 	h := &handler{
-		networkID:  config.Network,
-		forkFilter: forkid.NewFilter(config.Chain),
-		eventMux:   config.EventMux,
-		database:   config.Database,
-		txpool:     config.TxPool,
-		chain:      config.Chain,
-		peers:      newPeerSet(),
-		merger:     config.Merger,
-		whitelist:  config.Whitelist,
-		quitSync:   make(chan struct{}),
+		networkID:                config.Network,
+		forkFilter:               forkid.NewFilter(config.Chain),
+		eventMux:                 config.EventMux,
+		database:                 config.Database,
+		txpool:                   config.TxPool,
+		chain:                    config.Chain,
+		privateChain:             config.PrivateChain,
+		unpublishedPrivateBlocks: config.UnpublishedPrivateBlocks,
+		privateBranchLength:      config.PrivateBranchLength,
+		minerStrategy:            config.MinerStrategy,
+		peers:                    newPeerSet(),
+		merger:                   config.Merger,
+		whitelist:                config.Whitelist,
+		quitSync:                 make(chan struct{}),
 	}
+
 	if config.Sync == downloader.FullSync {
 		// The database seems empty as the current block is the genesis. Yet the snap
 		// block is ahead, so snap sync was enabled for this node at a certain point.
@@ -255,10 +272,47 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			}
 			return 0, nil
 		}
+		fmt.Println("#-# blockchain.insertChain(blocks) | newHandler() in handler.go")
+		fmt.Printf("#-# blockchain: %p\n", h.chain)
+
+		// #-# we are receiving a new block
+
+		prev := h.privateChain.CurrentBlock().NumberU64() - h.chain.CurrentBlock().NumberU64()
+
 		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}
+
+		if h.minerStrategy == miner.HONEST {
+			return n, err
+		}
+
+		// #-# logic private chain
+		if prev == 0 {
+			h.privateChain.Copy(h.chain)
+			h.unpublishedPrivateBlocks.Clear()
+			*h.privateBranchLength = 0
+		} else if prev == 1 {
+			// publish last block of the private chain
+			h.eventMux.PublishBlock(h.privateChain.CurrentBlock())
+			if h.privateChain.CurrentBlock() == h.unpublishedPrivateBlocks.First() { // should always be true todo check
+				fmt.Println("#-# first unpublished is the same as last in private chain")
+				h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
+			}
+		} else if prev == 2 {
+			// publish all of the private chain
+			for _, block := range *h.unpublishedPrivateBlocks {
+				h.eventMux.PublishBlock(block)
+			}
+			h.unpublishedPrivateBlocks.Clear()
+			*h.privateBranchLength = 0
+		} else {
+			// publish first unpublished block in private block.
+			h.eventMux.PublishBlock(h.unpublishedPrivateBlocks.First())
+			h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
+		}
+
 		return n, err
 	}
 	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock, heighter, nil, inserter, h.removePeer)

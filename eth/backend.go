@@ -215,20 +215,42 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if checkpoint == nil {
 		checkpoint = params.TrustedCheckpoints[genesisHash]
 	}
+
+	// assemble private chain
+	// Assemble the Ethereum object
+	privateChainDb, err := stack.OpenDatabaseWithFreezer("privatechaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/privatechaindata/", false)
+	if err != nil {
+		return nil, err
+	}
+	privateChainConfig, _, _ := core.SetupGenesisBlockWithOverride(privateChainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
+	privateChain, err := core.NewBlockChain(privateChainDb, cacheConfig, privateChainConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
+	privateBranchLength := 0
+	privateBranchLengthPointer := &privateBranchLength
+
+	var unpublishedPrivateBlocks *types.Blocks
+
 	if eth.handler, err = newHandler(&handlerConfig{
-		Database:   chainDb,
-		Chain:      eth.blockchain,
-		TxPool:     eth.txPool,
-		Merger:     merger,
-		Network:    config.NetworkId,
-		Sync:       config.SyncMode,
-		BloomCache: uint64(cacheLimit),
-		EventMux:   eth.eventMux,
-		Checkpoint: checkpoint,
-		Whitelist:  config.Whitelist,
+		Database:                 chainDb,
+		Chain:                    eth.blockchain,
+		PrivateChain:             privateChain,
+		UnpublishedPrivateBlocks: unpublishedPrivateBlocks,
+		PrivateBranchLength:      privateBranchLengthPointer,
+		MinerStrategy:            config.Miner.MinerStrategy,
+		TxPool:                   eth.txPool,
+		Merger:                   merger,
+		Network:                  config.NetworkId,
+		Sync:                     config.SyncMode,
+		BloomCache:               uint64(cacheLimit),
+		EventMux:                 eth.eventMux,
+		Checkpoint:               checkpoint,
+		Whitelist:                config.Whitelist,
 	}); err != nil {
 		return nil, err
 	}
+
+	config.Miner.PrivateChain = privateChain
+	config.Miner.UnpublishedPrivateBlocks = unpublishedPrivateBlocks
+	config.Miner.PrivateBranchLength = privateBranchLengthPointer
 
 	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))

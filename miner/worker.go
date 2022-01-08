@@ -123,12 +123,16 @@ type intervalAdjust struct {
 // worker is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type worker struct {
-	config      *Config
-	chainConfig *params.ChainConfig
-	engine      consensus.Engine
-	eth         Backend
-	chain       *core.BlockChain
-	merger      *consensus.Merger
+	config                   *Config
+	chainConfig              *params.ChainConfig
+	engine                   consensus.Engine
+	eth                      Backend
+	chain                    *core.BlockChain
+	privateChain             *core.BlockChain
+	unpublishedPrivateBlocks *types.Blocks
+	privateBranchLength      *int
+	minerStrategy            Strategy
+	merger                   *consensus.Merger
 
 	// Feeds
 	pendingLogsFeed event.Feed
@@ -193,28 +197,32 @@ type worker struct {
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, merger *consensus.Merger) *worker {
 	worker := &worker{
-		config:             config,
-		chainConfig:        chainConfig,
-		engine:             engine,
-		eth:                eth,
-		mux:                mux,
-		chain:              eth.BlockChain(),
-		merger:             merger,
-		isLocalBlock:       isLocalBlock,
-		localUncles:        make(map[common.Hash]*types.Block),
-		remoteUncles:       make(map[common.Hash]*types.Block),
-		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
-		pendingTasks:       make(map[common.Hash]*task),
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),
-		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize),
-		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize),
-		newWorkCh:          make(chan *newWorkReq),
-		taskCh:             make(chan *task),
-		resultCh:           make(chan *types.Block, resultQueueSize),
-		exitCh:             make(chan struct{}),
-		startCh:            make(chan struct{}, 1),
-		resubmitIntervalCh: make(chan time.Duration),
-		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
+		config:                   config,
+		chainConfig:              chainConfig,
+		engine:                   engine,
+		eth:                      eth,
+		mux:                      mux,
+		chain:                    eth.BlockChain(),
+		privateChain:             config.PrivateChain,
+		unpublishedPrivateBlocks: config.UnpublishedPrivateBlocks,
+		privateBranchLength:      config.PrivateBranchLength,
+		minerStrategy:            config.MinerStrategy,
+		merger:                   merger,
+		isLocalBlock:             isLocalBlock,
+		localUncles:              make(map[common.Hash]*types.Block),
+		remoteUncles:             make(map[common.Hash]*types.Block),
+		unconfirmed:              newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
+		pendingTasks:             make(map[common.Hash]*task),
+		txsCh:                    make(chan core.NewTxsEvent, txChanSize),
+		chainHeadCh:              make(chan core.ChainHeadEvent, chainHeadChanSize),
+		chainSideCh:              make(chan core.ChainSideEvent, chainSideChanSize),
+		newWorkCh:                make(chan *newWorkReq),
+		taskCh:                   make(chan *task),
+		resultCh:                 make(chan *types.Block, resultQueueSize),
+		exitCh:                   make(chan struct{}),
+		startCh:                  make(chan struct{}, 1),
+		resubmitIntervalCh:       make(chan time.Duration),
+		resubmitAdjustCh:         make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
 	// Subscribe NewTxsEvent for tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
@@ -572,6 +580,7 @@ func (w *worker) taskLoop() {
 		}
 	}
 	for {
+		// #-# control task channel in order to mine on custom block (like block from own chain)
 		select {
 		case task := <-w.taskCh:
 			if w.newTaskHook != nil {
@@ -593,6 +602,7 @@ func (w *worker) taskLoop() {
 			w.pendingTasks[sealHash] = task
 			w.pendingMu.Unlock()
 
+			// #-# this is where we start mining on a new block and pass in our own result channel
 			if err := w.engine.Seal(w.chain, task.block, w.resultCh, stopCh); err != nil {
 				log.Warn("Block sealing failed", "err", err)
 				w.pendingMu.Lock()
@@ -617,8 +627,16 @@ func (w *worker) resultLoop() {
 			if block == nil {
 				continue
 			}
+
+			// #-# configure what chain to append the found block to (selfish miner always appends it to private chain first)
+			chain := w.chain
+
+			if w.minerStrategy != HONEST {
+				chain = w.privateChain
+			}
+
 			// Short circuit when receiving duplicate result caused by resubmitting.
-			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+			if chain.HasBlock(block.Hash(), block.NumberU64()) {
 				continue
 			}
 			var (
@@ -658,21 +676,43 @@ func (w *worker) resultLoop() {
 				}
 				logs = append(logs, receipt.Logs...)
 			}
+
+			prev := w.privateChain.CurrentBlock().NumberU64() - w.chain.CurrentBlock().NumberU64()
+
 			// Commit block and state to database.
-			_, err := w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
+			_, err := chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
 			}
+
 			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
 
-			// Broadcast the block and announce chain insertion event
-			w.mux.Post(core.NewMinedBlockEvent{Block: block})
+			if w.minerStrategy == HONEST {
+				// Broadcast the block and announce chain insertion event
+				w.mux.PublishBlock(block)
+
+				// Insert the block into the set of pending ones to resultLoop for confirmations
+				w.unconfirmed.Insert(block.NumberU64(), block.Hash())
+				return
+			}
+
+			// append block to unpublishedPrivateBlocks if this miner is selfish
+			w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block)
+			*w.privateBranchLength = *w.privateBranchLength + 1
+
+			if prev == 0 && *w.privateBranchLength == 2 {
+				// publish all of the private chain
+				for _, block := range *w.unpublishedPrivateBlocks {
+					w.mux.PublishBlock(block)
+				}
+				w.unpublishedPrivateBlocks.Clear()
+				*w.privateBranchLength = 0
+			}
 
 			// Insert the block into the set of pending ones to resultLoop for confirmations
-			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
-
+			w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
 		case <-w.exitCh:
 			return
 		}
@@ -1035,13 +1075,41 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	// Deep copy receipts here to avoid interaction between different tasks.
 	receipts := copyReceipts(w.current.receipts)
 	s := w.current.state.Copy()
-	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, uncles, receipts)
+	// #-#
+	// logic for which chain (public or private) to mine on
+	chain := w.chain
+
+	filteredUncles := make([]*types.Header, len(uncles))
+
+	if w.minerStrategy != HONEST {
+		chain = w.privateChain
+
+		if w.minerStrategy == SelfishNoUncles {
+			filteredUncles = nil
+		}
+
+		if w.minerStrategy == SelfishOwnUncles {
+			for _, uncle := range uncles {
+				if w.isLocalBlock(uncle) {
+					filteredUncles = append(filteredUncles, uncle)
+				}
+			}
+		}
+
+		if w.minerStrategy == SelfishAllUncles {
+			filteredUncles = uncles
+		}
+	} else {
+		filteredUncles = uncles
+	}
+
+	block, err := w.engine.FinalizeAndAssemble(chain, w.current.header, s, w.current.txs, filteredUncles, receipts)
 	if err != nil {
 		return err
 	}
 
 	// If we're post merge, just ignore
-	td, ttd := w.chain.GetTd(block.ParentHash(), block.NumberU64()-1), w.chain.Config().TerminalTotalDifficulty
+	td, ttd := chain.GetTd(block.ParentHash(), block.NumberU64()-1), chain.Config().TerminalTotalDifficulty
 	if td != nil && ttd != nil && td.Cmp(ttd) >= 0 {
 		return nil
 	}
@@ -1051,10 +1119,11 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 			interval()
 		}
 		select {
+		// #-# control what block gets passed as block to be mined on (like private chain)
 		case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
 			w.unconfirmed.Shift(block.NumberU64() - 1)
 			log.Info("Commit new mining work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
-				"uncles", len(uncles), "txs", w.current.tcount,
+				"uncles", len(filteredUncles), "txs", w.current.tcount,
 				"gas", block.GasUsed(), "fees", totalFees(block, receipts),
 				"elapsed", common.PrettyDuration(time.Since(start)))
 
