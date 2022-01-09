@@ -236,6 +236,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		UnpublishedPrivateBlocks: unpublishedPrivateBlocks,
 		PrivateBranchLength:      privateBranchLengthPointer,
 		MinerStrategy:            config.Miner.MinerStrategy,
+		MinerLogFile:             config.Miner.LogFile,
 		TxPool:                   eth.txPool,
 		Merger:                   merger,
 		Network:                  config.NetworkId,

@@ -65,6 +65,7 @@ type Config struct {
 	UnpublishedPrivateBlocks *types.Blocks
 	PrivateBranchLength      *int
 	MinerStrategy            Strategy // Strategy the miner should use
+	LogFile                  string
 }
 
 // Miner creates blocks and searches for proof-of-work values.

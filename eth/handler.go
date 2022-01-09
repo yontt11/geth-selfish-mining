@@ -85,6 +85,7 @@ type handlerConfig struct {
 	UnpublishedPrivateBlocks *types.Blocks
 	PrivateBranchLength      *int
 	MinerStrategy            miner.Strategy
+	MinerLogFile             string
 	TxPool                   txPool                    // Transaction pool to propagate from
 	Merger                   *consensus.Merger         // The manager for eth1/2 transition
 	Network                  uint64                    // Network identifier to adfvertise
@@ -112,6 +113,7 @@ type handler struct {
 	unpublishedPrivateBlocks *types.Blocks
 	privateBranchLength      *int
 	minerStrategy            miner.Strategy
+	minerLogFile             string
 
 	maxPeers int
 
@@ -154,6 +156,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		unpublishedPrivateBlocks: config.UnpublishedPrivateBlocks,
 		privateBranchLength:      config.PrivateBranchLength,
 		minerStrategy:            config.MinerStrategy,
+		minerLogFile:             config.MinerLogFile,
 		peers:                    newPeerSet(),
 		merger:                   config.Merger,
 		whitelist:                config.Whitelist,
