@@ -20,6 +20,7 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"fmt"
+	node2 "github.com/ethereum/go-ethereum/node"
 	"math"
 	"math/big"
 	mrand "math/rand"
@@ -74,7 +75,9 @@ type HeaderChain struct {
 }
 
 func (hc *HeaderChain) Copy(toCopy *HeaderChain) {
-	// todo copy chain db
+	db := hc.chainDb.(*node2.CloseTrackingDB)
+	toCopyDB := toCopy.chainDb.(*node2.CloseTrackingDB)
+	db.Copy(toCopyDB)
 
 	hc.genesisHeader = toCopy.genesisHeader
 	hc.currentHeader = toCopy.currentHeader
