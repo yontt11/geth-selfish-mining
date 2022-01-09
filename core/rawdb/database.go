@@ -34,8 +34,20 @@ import (
 
 // freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
-	ethdb.KeyValueStore
-	ethdb.AncientStore
+	ethdb.KeyValueStore // part of leveldb.Database
+	ethdb.AncientStore  // part of Freezer
+}
+
+type FreezerDB freezerdb
+
+func (frdb *FreezerDB) Copy(toCopy *FreezerDB) {
+	keyValueStore := frdb.KeyValueStore.(*leveldb.Database)
+	toCopyKeyValueStore := toCopy.KeyValueStore.(*leveldb.Database)
+	keyValueStore.Copy(toCopyKeyValueStore)
+
+	ancientStore := frdb.AncientStore.(*freezer)
+	toCopyAncientStore := toCopy.AncientStore.(*freezer)
+	ancientStore.Copy(toCopyAncientStore)
 }
 
 // Close implements io.Closer, closing both the fast key-value store as well as

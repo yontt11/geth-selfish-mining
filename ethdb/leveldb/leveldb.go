@@ -82,6 +82,40 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
+func (db *Database) Copy(toCopy *Database) {
+	copyDatabase(db.db, toCopy.db)
+
+	db.compTimeMeter = toCopy.compTimeMeter
+	db.compReadMeter = toCopy.compReadMeter
+	db.compWriteMeter = toCopy.compWriteMeter
+	db.writeDelayNMeter = toCopy.writeDelayNMeter
+	db.writeDelayMeter = toCopy.writeDelayMeter
+	db.diskSizeGauge = toCopy.diskSizeGauge
+	db.diskReadMeter = toCopy.diskReadMeter
+	db.diskWriteMeter = toCopy.diskWriteMeter
+	db.memCompGauge = toCopy.memCompGauge
+	db.level0CompGauge = toCopy.level0CompGauge
+	db.nonlevel0CompGauge = toCopy.nonlevel0CompGauge
+	db.seekCompGauge = toCopy.seekCompGauge
+}
+
+func copyDatabase(db *leveldb.DB, toCopy *leveldb.DB) {
+	// deleting previous data from db
+	iter := db.NewIterator(nil, nil)
+	for iter.Next() {
+		key := iter.Key()
+		db.Delete(key, nil)
+	}
+
+	// copy data from other db
+	iter = toCopy.NewIterator(nil, nil)
+	for iter.Next() {
+		key := iter.Key()
+		value := iter.Value()
+		db.Put(key, value, nil)
+	}
+}
+
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {

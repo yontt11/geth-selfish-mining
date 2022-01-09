@@ -625,7 +625,11 @@ type closeTrackingDB struct {
 type CloseTrackingDB closeTrackingDB
 
 func (db *CloseTrackingDB) Copy(toCopy *CloseTrackingDB) {
-	// todo
+	freezerDB := db.Database.(*rawdb.FreezerDB)
+	toCopyFreezerDB := toCopy.Database.(*rawdb.FreezerDB)
+	freezerDB.Copy(toCopyFreezerDB)
+
+	db.n = toCopy.n // todo check if node should stay the same
 }
 
 func (db *closeTrackingDB) Close() error {
