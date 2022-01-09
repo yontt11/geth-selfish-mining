@@ -695,24 +695,23 @@ func (w *worker) resultLoop() {
 
 				// Insert the block into the set of pending ones to resultLoop for confirmations
 				w.unconfirmed.Insert(block.NumberU64(), block.Hash())
-				return
-			}
+			} else {
+				// append block to unpublishedPrivateBlocks if this miner is selfish
+				w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block)
+				*w.privateBranchLength = *w.privateBranchLength + 1
 
-			// append block to unpublishedPrivateBlocks if this miner is selfish
-			w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block)
-			*w.privateBranchLength = *w.privateBranchLength + 1
-
-			if prev == 0 && *w.privateBranchLength == 2 {
-				// publish all of the private chain
-				for _, block := range *w.unpublishedPrivateBlocks {
-					publishBlock(w.mux, block)
+				if prev == 0 && *w.privateBranchLength == 2 {
+					// publish all of the private chain
+					for _, block := range *w.unpublishedPrivateBlocks {
+						publishBlock(w.mux, block)
+					}
+					w.unpublishedPrivateBlocks.Clear()
+					*w.privateBranchLength = 0
 				}
-				w.unpublishedPrivateBlocks.Clear()
-				*w.privateBranchLength = 0
-			}
 
-			// Insert the block into the set of pending ones to resultLoop for confirmations
-			w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
+				// Insert the block into the set of pending ones to resultLoop for confirmations
+				w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
+			}
 		case <-w.exitCh:
 			return
 		}
