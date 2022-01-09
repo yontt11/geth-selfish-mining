@@ -50,6 +50,20 @@ func (frdb *FreezerDB) Copy(toCopy *FreezerDB) {
 	ancientStore.Copy(toCopyAncientStore)
 }
 
+func (frdb *FreezerDB) Close() error {
+	var errs []error
+	if err := frdb.AncientStore.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := frdb.KeyValueStore.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) != 0 {
+		return fmt.Errorf("%v", errs)
+	}
+	return nil
+}
+
 // Close implements io.Closer, closing both the fast key-value store as well as
 // the slow ancient tables.
 func (frdb *freezerdb) Close() error {

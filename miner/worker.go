@@ -691,7 +691,7 @@ func (w *worker) resultLoop() {
 
 			if w.minerStrategy == HONEST {
 				// Broadcast the block and announce chain insertion event
-				w.mux.PublishBlock(block)
+				publishBlock(w.mux, block)
 
 				// Insert the block into the set of pending ones to resultLoop for confirmations
 				w.unconfirmed.Insert(block.NumberU64(), block.Hash())
@@ -705,7 +705,7 @@ func (w *worker) resultLoop() {
 			if prev == 0 && *w.privateBranchLength == 2 {
 				// publish all of the private chain
 				for _, block := range *w.unpublishedPrivateBlocks {
-					w.mux.PublishBlock(block)
+					publishBlock(w.mux, block)
 				}
 				w.unpublishedPrivateBlocks.Clear()
 				*w.privateBranchLength = 0
@@ -717,6 +717,10 @@ func (w *worker) resultLoop() {
 			return
 		}
 	}
+}
+
+func publishBlock(mux *event.TypeMux, block *types.Block) {
+	mux.Post(core.NewMinedBlockEvent{Block: block})
 }
 
 // makeCurrent creates a new environment for the current cycle.

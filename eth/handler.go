@@ -295,7 +295,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			*h.privateBranchLength = 0
 		} else if prev == 1 {
 			// publish last block of the private chain
-			h.eventMux.PublishBlock(h.privateChain.CurrentBlock())
+			publishBlock(h.eventMux, h.privateChain.CurrentBlock())
 			if h.privateChain.CurrentBlock() == h.unpublishedPrivateBlocks.First() { // should always be true todo check
 				fmt.Println("#-# first unpublished is the same as last in private chain")
 				h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
@@ -303,13 +303,13 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		} else if prev == 2 {
 			// publish all of the private chain
 			for _, block := range *h.unpublishedPrivateBlocks {
-				h.eventMux.PublishBlock(block)
+				publishBlock(h.eventMux, block)
 			}
 			h.unpublishedPrivateBlocks.Clear()
 			*h.privateBranchLength = 0
 		} else {
 			// publish first unpublished block in private block.
-			h.eventMux.PublishBlock(h.unpublishedPrivateBlocks.First())
+			publishBlock(h.eventMux, h.unpublishedPrivateBlocks.First())
 			h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
 		}
 
@@ -327,6 +327,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, h.txpool.AddRemotes, fetchTx)
 	h.chainSync = newChainSyncer(h)
 	return h, nil
+}
+
+func publishBlock(mux *event.TypeMux, block *types.Block) {
+	mux.Post(core.NewMinedBlockEvent{Block: block})
 }
 
 // runEthPeer registers an eth peer into the joint eth/snap peerset, adds it to

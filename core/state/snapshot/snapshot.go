@@ -172,7 +172,6 @@ type Tree struct {
 func (t *Tree) Copy(toCopy *Tree) {
 	diskDB := t.diskdb.(*node.CloseTrackingDB)
 	toCopyDiskDB := toCopy.diskdb.(*node.CloseTrackingDB)
-
 	diskDB.Copy(toCopyDiskDB)
 
 	t.triedb.Copy(toCopy.triedb)
