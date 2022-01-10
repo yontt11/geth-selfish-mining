@@ -20,13 +20,9 @@ import (
 	"bytes"
 	"errors"
 	"math/big"
-	"os"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	log2 "log"
 
 	mapset "github.com/deckarep/golang-set"
 	"github.com/ethereum/go-ethereum/common"
@@ -253,10 +249,6 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 	if init {
 		worker.startCh <- struct{}{}
 	}
-
-	f, _ := os.OpenFile(worker.minerLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	log2.SetOutput(f)
-	log2.Println("miner strategy: " + strconv.Itoa(int(worker.minerStrategy)))
 	return worker
 }
 
@@ -687,7 +679,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 
-			prev := w.privateChain.CurrentBlock().NumberU64() - w.chain.CurrentBlock().NumberU64()
+			prev := int(w.privateChain.CurrentBlock().NumberU64()) - int(w.chain.CurrentBlock().NumberU64())
 
 			// Commit block and state to database.
 			_, err := chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
