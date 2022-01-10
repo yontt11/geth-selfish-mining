@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/big"
 	"os"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -282,82 +281,76 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		log2.SetOutput(f)
 
 		// #-# we are receiving a new block
-		log2.Println("receiving a new blocks, size: " + strconv.Itoa(blocks.Length()))
-		log2.Println("last block number: " + strconv.Itoa(int(blocks[blocks.Length()-1].NumberU64())))
+		log2.Printf("receiving a new blocks, size: %d", blocks.Length())
+		log2.Printf("last block number: %d", int(blocks[blocks.Length()-1].NumberU64()))
 
 		prev := int(h.privateChain.CurrentBlock().NumberU64()) - int(h.chain.CurrentBlock().NumberU64())
 
-		log2.Println("private chain current block: " + strconv.Itoa(int(h.privateChain.CurrentBlock().NumberU64())))
-		log2.Println("public chain current block: " + strconv.Itoa(int(h.chain.CurrentBlock().NumberU64())))
-		log2.Println("prev: " + strconv.Itoa(prev))
+		log2.Printf("private chain current block: %d", int(h.privateChain.CurrentBlock().NumberU64()))
+		log2.Printf("public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
 
 		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}
 
-		log2.Println("after insertion public chain current block: " + strconv.Itoa(int(h.chain.CurrentBlock().NumberU64())))
+		log2.Printf("after insertion public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
 
 		if h.minerStrategy == miner.HONEST {
-			log2.Println("miner strategy is honest 2")
-			log2.Println("miner strategy: " + strconv.Itoa(int(h.minerStrategy)))
 			return n, err
 		}
 
+		log2.Printf("prev: %d ", prev)
+
 		// #-# logic private chain
 		if prev <= 0 { // prev will be < 0 the first time handler receives block which is the same case as prev == 0
-			log2.Println("here " + strconv.Itoa(prev))
 			//h.privateChain.Copy(h.chain) // todo private chain copy not working
+			log2.Printf("private chain current block after copying public chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
 
-			log2.Println("private chain current block after copying public chain: " + strconv.Itoa(int(h.privateChain.CurrentBlock().NumberU64())))
+			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
 
-			//log2.Println("unpublished private blocks length: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length())) // todo unpublishedPrivateBlocks error
-			log2.Println("privateBranchLength: " + strconv.Itoa(*h.privateBranchLength))
-
-			//h.unpublishedPrivateBlocks.Clear()
+			h.unpublishedPrivateBlocks.Clear()
 			*h.privateBranchLength = 0
 
-			//log2.Println("unpublished private blocks length after: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
-			log2.Println("private branch length after: " + strconv.Itoa(*h.privateBranchLength))
+			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("privateBranchLength after: %d", *h.privateBranchLength)
 		} else if prev == 1 {
-			log2.Println("prev 1")
 			// publish last block of the private chain
 			publishBlock(h.eventMux, h.privateChain.CurrentBlock())
-			log2.Println("published last block of private chain: " + strconv.Itoa(int(h.privateChain.CurrentBlock().NumberU64())))
-			//log2.Println("unpublished private blocks length: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
+			log2.Printf("published last block of private chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
+			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
 
 			if h.privateChain.CurrentBlock() == h.unpublishedPrivateBlocks.First() {
-				log2.Println("first unpublished is the same as last in private chain")
-				log2.Println("removing first unpublished private block/last from private chain")
-				//h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
-				//log2.Println("unpublished private blocks length after: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
+				log2.Printf("first unpublished is the same as last in private chain")
+				log2.Printf("removing first unpublished private block/last from private chain")
+				h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
+				log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
 			} else { //
-				log2.Println("#-# first unpublished is not the same as last in private chain")
+				log2.Printf("first unpublished is not the same as last in private chain")
 			}
 
 		} else if prev == 2 {
-			log2.Println("prev 2")
 			// publish all of the private chain
-			log2.Println("publishing all of the private chain")
-			//log2.Println("unpublished private blocks length: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
-			log2.Println("privateBranchLength: " + strconv.Itoa(*h.privateBranchLength))
+			log2.Printf("publishing all of the private chain")
+			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
 
 			for _, block := range *h.unpublishedPrivateBlocks {
 				publishBlock(h.eventMux, block)
 			}
-			//h.unpublishedPrivateBlocks.Clear()
+			h.unpublishedPrivateBlocks.Clear()
 			*h.privateBranchLength = 0
 
-			//log2.Println("unpublished private blocks length after: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
-			log2.Println("privateBranchLength: " + strconv.Itoa(*h.privateBranchLength))
+			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
 		} else if prev > 2 {
-			log2.Println("test " + strconv.Itoa(prev))
 			// publish first unpublished block in private block.
-			//log2.Println("unpublished private blocks length: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
-			log2.Println("publishing first unpublished private block")
-			//publishBlock(h.eventMux, h.unpublishedPrivateBlocks.First())
-			//h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
-			//log2.Println("unpublished private blocks length after: " + strconv.Itoa(h.unpublishedPrivateBlocks.Length()))
+			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("publishing first unpublished private block")
+			publishBlock(h.eventMux, h.unpublishedPrivateBlocks.First())
+			h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
+			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
 		}
 
 		return n, err

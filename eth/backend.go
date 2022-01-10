@@ -227,7 +227,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	privateBranchLength := 0
 	privateBranchLengthPointer := &privateBranchLength
 
-	var unpublishedPrivateBlocks *types.Blocks
+	var unpublishedPrivateBlocks = &types.Blocks{}
 
 	if eth.handler, err = newHandler(&handlerConfig{
 		Database:                 chainDb,
