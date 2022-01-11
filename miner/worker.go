@@ -19,6 +19,7 @@ package miner
 import (
 	"bytes"
 	"errors"
+	log2 "log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -132,7 +133,6 @@ type worker struct {
 	unpublishedPrivateBlocks *types.Blocks
 	privateBranchLength      *int
 	minerStrategy            Strategy
-	minerLogFile             string
 	merger                   *consensus.Merger
 
 	// Feeds
@@ -208,7 +208,6 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		unpublishedPrivateBlocks: config.UnpublishedPrivateBlocks,
 		privateBranchLength:      config.PrivateBranchLength,
 		minerStrategy:            config.MinerStrategy,
-		minerLogFile:             config.LogFile,
 		merger:                   merger,
 		isLocalBlock:             isLocalBlock,
 		localUncles:              make(map[common.Hash]*types.Block),
@@ -630,6 +629,7 @@ func (w *worker) resultLoop() {
 				continue
 			}
 
+			log2.Printf("worker - mined a block: %d", int(block.NumberU64()))
 			// #-# configure what chain to append the found block to (selfish miner always appends it to private chain first)
 			chain := w.chain
 
@@ -680,6 +680,7 @@ func (w *worker) resultLoop() {
 			}
 
 			prev := int(w.privateChain.CurrentBlock().NumberU64()) - int(w.chain.CurrentBlock().NumberU64())
+			log2.Printf("worker - prev: %d", prev)
 
 			// Commit block and state to database.
 			_, err := chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
@@ -698,21 +699,28 @@ func (w *worker) resultLoop() {
 				// Insert the block into the set of pending ones to resultLoop for confirmations
 				w.unconfirmed.Insert(block.NumberU64(), block.Hash())
 			} else {
+				log2.Printf("worker - unpublished private blocks length: %d", w.unpublishedPrivateBlocks.Length())
+				log2.Printf("worker - privateBranchLength : %d", *w.privateBranchLength)
 				// append block to unpublishedPrivateBlocks if this miner is selfish
 				w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block)
 				*w.privateBranchLength = *w.privateBranchLength + 1
+				log2.Printf("worker - unpublished private blocks length after: %d", w.unpublishedPrivateBlocks.Length())
+				log2.Printf("worker - privateBranchLength after: %d", *w.privateBranchLength)
 
 				if prev == 0 && *w.privateBranchLength == 2 {
+					log2.Printf("worker - publishing all of the private chain, length: %d", w.unpublishedPrivateBlocks.Length())
 					// publish all of the private chain
 					for _, block := range *w.unpublishedPrivateBlocks {
+						log2.Printf("worker - publishing block %d", int(block.NumberU64()))
 						publishBlock(w.mux, block)
 					}
 					w.unpublishedPrivateBlocks.Clear()
 					*w.privateBranchLength = 0
+					log2.Printf("worker - unpublished private blocks length after publishing: %d", w.unpublishedPrivateBlocks.Length())
 				}
 
 				// Insert the block into the set of pending ones to resultLoop for confirmations
-				w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
+				//w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
 			}
 		case <-w.exitCh:
 			return

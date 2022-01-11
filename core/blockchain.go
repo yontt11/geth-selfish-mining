@@ -22,6 +22,7 @@ import (
 	"fmt"
 	node2 "github.com/ethereum/go-ethereum/node"
 	"io"
+	log2 "log"
 	"math/big"
 	"sort"
 	"sync"
@@ -213,16 +214,12 @@ type BlockChain struct {
 }
 
 func (bc *BlockChain) Copy(toCopy *BlockChain) {
-	db := bc.db.(*node2.CloseTrackingDB)
-	toCopyDB := toCopy.db.(*node2.CloseTrackingDB)
-	db.Copy(toCopyDB)
-
+	node2.CopyDatabase(bc.db, toCopy.db)
 	bc.snaps.Copy(toCopy.snaps)
 
 	bc.triegc.Copy(toCopy.triegc)
 	bc.gcproc = toCopy.gcproc
 	bc.txLookupLimit = toCopy.txLookupLimit
-
 	bc.hc.Copy(toCopy.hc)
 
 	bc.genesisBlock = toCopy.genesisBlock
@@ -245,7 +242,7 @@ func (bc *BlockChain) Copy(toCopy *BlockChain) {
 
 func EmptyCache(cache *lru.Cache) {
 	for {
-		fmt.Println("#-# cache length ", cache.Len())
+		log2.Printf("cache length: %d ", cache.Len())
 		if cache.Len() == 0 {
 			break
 		}

@@ -93,10 +93,7 @@ type Database struct {
 }
 
 func (db *Database) Copy(toCopy *Database) {
-	diskDB := db.diskdb.(*node2.CloseTrackingDB)
-	toCopyDiskDB := toCopy.diskdb.(*node2.CloseTrackingDB)
-
-	diskDB.Copy(toCopyDiskDB)
+	node2.CopyKeyValueStore(db.diskdb, toCopy.diskdb)
 
 	db.cleans.Reset()
 	db.dirties = toCopy.dirties

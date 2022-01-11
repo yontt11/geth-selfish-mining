@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	log2 "log"
 	"math"
 	"math/big"
 	"os"
@@ -1420,7 +1421,9 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.MinerStrategy = miner.Strategy(ctx.GlobalInt(MinerStrategyFlag.Name))
 	}
 	if ctx.GlobalIsSet(MinerLogFileFlag.Name) {
-		cfg.LogFile = ctx.GlobalString(MinerLogFileFlag.Name)
+		minerLogFile := ctx.GlobalString(MinerLogFileFlag.Name)
+		f, _ := os.OpenFile(minerLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		log2.SetOutput(f)
 	}
 	if ctx.GlobalIsSet(LegacyMinerGasTargetFlag.Name) {
 		log.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")

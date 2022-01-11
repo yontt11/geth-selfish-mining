@@ -19,6 +19,7 @@ package node
 import (
 	"errors"
 	"fmt"
+	log2 "log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -591,6 +592,7 @@ func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer,
 	var err error
 	if n.config.DataDir == "" {
 		db = rawdb.NewMemoryDatabase()
+		log2.Printf("data dir empty")
 	} else {
 		root := n.ResolvePath(name)
 		switch {
@@ -600,10 +602,14 @@ func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer,
 			freezer = n.ResolvePath(freezer)
 		}
 		db, err = rawdb.NewLevelDBDatabaseWithFreezer(root, cache, handles, freezer, namespace, readonly)
+		log2.Printf("data dir not empty: %s", n.config.DataDir)
 	}
 
 	if err == nil {
+		log2.Printf("error nil")
 		db = n.wrapDatabase(db)
+	} else {
+		log2.Printf("error: %s", err.Error())
 	}
 	return db, err
 }
@@ -622,14 +628,23 @@ type closeTrackingDB struct {
 }
 
 // makes data type public
-type CloseTrackingDB closeTrackingDB
 
-func (db *CloseTrackingDB) Copy(toCopy *CloseTrackingDB) {
-	freezerDB := db.Database.(*rawdb.FreezerDB)
-	toCopyFreezerDB := toCopy.Database.(*rawdb.FreezerDB)
-	freezerDB.Copy(toCopyFreezerDB)
+func CopyDatabase(db ethdb.Database, toCopy ethdb.Database) { // todo pointers
+	dbClosing := db.(*closeTrackingDB)
+	toCopyClosing := toCopy.(*closeTrackingDB)
 
-	db.n = toCopy.n // todo check if node should stay the same
+	rawdb.CopyFreezer(dbClosing.Database, toCopyClosing.Database)
+
+	dbClosing.n = toCopyClosing.n
+}
+
+func CopyKeyValueStore(db ethdb.KeyValueStore, toCopy ethdb.KeyValueStore) {
+	dbClosing := db.(*closeTrackingDB)
+	toCopyClosing := toCopy.(*closeTrackingDB)
+
+	rawdb.CopyFreezer(dbClosing.Database, toCopyClosing.Database)
+
+	dbClosing.n = toCopyClosing.n
 }
 
 func (db *closeTrackingDB) Close() error {

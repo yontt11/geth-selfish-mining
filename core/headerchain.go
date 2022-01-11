@@ -75,9 +75,7 @@ type HeaderChain struct {
 }
 
 func (hc *HeaderChain) Copy(toCopy *HeaderChain) {
-	db := hc.chainDb.(*node2.CloseTrackingDB)
-	toCopyDB := toCopy.chainDb.(*node2.CloseTrackingDB)
-	db.Copy(toCopyDB)
+	node2.CopyDatabase(hc.chainDb, toCopy.chainDb)
 
 	hc.genesisHeader = toCopy.genesisHeader
 	hc.currentHeader = toCopy.currentHeader

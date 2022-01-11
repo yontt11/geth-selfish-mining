@@ -38,30 +38,17 @@ type freezerdb struct {
 	ethdb.AncientStore  // part of Freezer
 }
 
-type FreezerDB freezerdb
+func CopyFreezer(db ethdb.Database, toCopy ethdb.Database) {
+	dbFreezer := db.(*freezerdb)
+	toCopyFreezer := toCopy.(*freezerdb)
 
-func (frdb *FreezerDB) Copy(toCopy *FreezerDB) {
-	keyValueStore := frdb.KeyValueStore.(*leveldb.Database)
-	toCopyKeyValueStore := toCopy.KeyValueStore.(*leveldb.Database)
+	keyValueStore := dbFreezer.KeyValueStore.(*leveldb.Database)
+	toCopyKeyValueStore := toCopyFreezer.KeyValueStore.(*leveldb.Database)
 	keyValueStore.Copy(toCopyKeyValueStore)
 
-	ancientStore := frdb.AncientStore.(*freezer)
-	toCopyAncientStore := toCopy.AncientStore.(*freezer)
+	ancientStore := dbFreezer.AncientStore.(*freezer)
+	toCopyAncientStore := toCopyFreezer.AncientStore.(*freezer)
 	ancientStore.Copy(toCopyAncientStore)
-}
-
-func (frdb *FreezerDB) Close() error {
-	var errs []error
-	if err := frdb.AncientStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if err := frdb.KeyValueStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if len(errs) != 0 {
-		return fmt.Errorf("%v", errs)
-	}
-	return nil
 }
 
 // Close implements io.Closer, closing both the fast key-value store as well as

@@ -22,7 +22,6 @@ import (
 	log2 "log"
 	"math"
 	"math/big"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,7 +85,6 @@ type handlerConfig struct {
 	UnpublishedPrivateBlocks *types.Blocks
 	PrivateBranchLength      *int
 	MinerStrategy            miner.Strategy
-	MinerLogFile             string
 	TxPool                   txPool                    // Transaction pool to propagate from
 	Merger                   *consensus.Merger         // The manager for eth1/2 transition
 	Network                  uint64                    // Network identifier to adfvertise
@@ -114,7 +112,6 @@ type handler struct {
 	unpublishedPrivateBlocks *types.Blocks
 	privateBranchLength      *int
 	minerStrategy            miner.Strategy
-	minerLogFile             string
 
 	maxPeers int
 
@@ -157,7 +154,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		unpublishedPrivateBlocks: config.UnpublishedPrivateBlocks,
 		privateBranchLength:      config.PrivateBranchLength,
 		minerStrategy:            config.MinerStrategy,
-		minerLogFile:             config.MinerLogFile,
 		peers:                    newPeerSet(),
 		merger:                   config.Merger,
 		whitelist:                config.Whitelist,
@@ -277,24 +273,21 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			return 0, nil
 		}
 
-		f, _ := os.OpenFile(h.minerLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		log2.SetOutput(f)
-
 		// #-# we are receiving a new block
-		log2.Printf("receiving a new blocks, size: %d", blocks.Length())
-		log2.Printf("last block number: %d", int(blocks[blocks.Length()-1].NumberU64()))
+		log2.Printf("handler - receiving a new blocks, size: %d", blocks.Length())
+		log2.Printf("handler - last block number: %d", int(blocks[blocks.Length()-1].NumberU64()))
 
 		prev := int(h.privateChain.CurrentBlock().NumberU64()) - int(h.chain.CurrentBlock().NumberU64())
 
-		log2.Printf("private chain current block: %d", int(h.privateChain.CurrentBlock().NumberU64()))
-		log2.Printf("public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
+		log2.Printf("handler - private chain current block: %d", int(h.privateChain.CurrentBlock().NumberU64()))
+		log2.Printf("handler - public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
 
 		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}
 
-		log2.Printf("after insertion public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
+		log2.Printf("handler - after insertion public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
 
 		if h.minerStrategy == miner.HONEST {
 			return n, err
@@ -304,37 +297,37 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 		// #-# logic private chain
 		if prev <= 0 { // prev will be < 0 the first time handler receives block which is the same case as prev == 0
-			//h.privateChain.Copy(h.chain) // todo private chain copy not working
-			log2.Printf("private chain current block after copying public chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
+			h.privateChain.Copy(h.chain)
+			log2.Printf("handler - private chain current block after copying public chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
 
-			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
-			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
+			log2.Printf("handler - unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - privateBranchLength: %d", *h.privateBranchLength)
 
 			h.unpublishedPrivateBlocks.Clear()
 			*h.privateBranchLength = 0
 
-			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
-			log2.Printf("privateBranchLength after: %d", *h.privateBranchLength)
+			log2.Printf("handler - unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - privateBranchLength after: %d", *h.privateBranchLength)
 		} else if prev == 1 {
 			// publish last block of the private chain
 			publishBlock(h.eventMux, h.privateChain.CurrentBlock())
-			log2.Printf("published last block of private chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
-			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - published last block of private chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
+			log2.Printf("handler - unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
 
 			if h.privateChain.CurrentBlock() == h.unpublishedPrivateBlocks.First() {
-				log2.Printf("first unpublished is the same as last in private chain")
-				log2.Printf("removing first unpublished private block/last from private chain")
+				log2.Printf("handler - first unpublished is the same as last in private chain")
+				log2.Printf("handler - removing first unpublished private block/last from private chain")
 				h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
-				log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
-			} else { //
-				log2.Printf("first unpublished is not the same as last in private chain")
+				log2.Printf("handler - unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			} else {
+				log2.Printf("handler - first unpublished is not the same as last in private chain")
 			}
 
 		} else if prev == 2 {
 			// publish all of the private chain
-			log2.Printf("publishing all of the private chain")
-			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
-			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
+			log2.Printf("handler - publishing all of the private chain")
+			log2.Printf("handler - unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - privateBranchLength: %d", *h.privateBranchLength)
 
 			for _, block := range *h.unpublishedPrivateBlocks {
 				publishBlock(h.eventMux, block)
@@ -342,15 +335,15 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			h.unpublishedPrivateBlocks.Clear()
 			*h.privateBranchLength = 0
 
-			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
-			log2.Printf("privateBranchLength: %d", *h.privateBranchLength)
+			log2.Printf("handler - unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - privateBranchLength: %d", *h.privateBranchLength)
 		} else if prev > 2 {
 			// publish first unpublished block in private block.
-			log2.Printf("unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
-			log2.Printf("publishing first unpublished private block")
+			log2.Printf("handler - unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - publishing first unpublished private block")
 			publishBlock(h.eventMux, h.unpublishedPrivateBlocks.First())
 			h.unpublishedPrivateBlocks = h.unpublishedPrivateBlocks.RemoveIndex(0)
-			log2.Printf("unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
+			log2.Printf("handler - unpublished private blocks length after: %d", h.unpublishedPrivateBlocks.Length())
 		}
 
 		return n, err
