@@ -34,21 +34,8 @@ import (
 
 // freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
-	ethdb.KeyValueStore // part of leveldb.Database
-	ethdb.AncientStore  // part of Freezer
-}
-
-func CopyFreezer(db ethdb.Database, toCopy ethdb.Database) {
-	dbFreezer := db.(*freezerdb)
-	toCopyFreezer := toCopy.(*freezerdb)
-
-	keyValueStore := dbFreezer.KeyValueStore.(*leveldb.Database)
-	toCopyKeyValueStore := toCopyFreezer.KeyValueStore.(*leveldb.Database)
-	keyValueStore.Copy(toCopyKeyValueStore)
-
-	ancientStore := dbFreezer.AncientStore.(*freezer)
-	toCopyAncientStore := toCopyFreezer.AncientStore.(*freezer)
-	ancientStore.Copy(toCopyAncientStore)
+	ethdb.KeyValueStore
+	ethdb.AncientStore
 }
 
 // Close implements io.Closer, closing both the fast key-value store as well as
@@ -160,6 +147,7 @@ func NewDatabase(db ethdb.KeyValueStore) ethdb.Database {
 func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace string, readonly bool) (ethdb.Database, error) {
 	// Create the idle freezer instance
 	frdb, err := newFreezer(freezer, namespace, readonly, freezerTableSize, FreezerNoSnappy)
+
 	if err != nil {
 		return nil, err
 	}

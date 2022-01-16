@@ -20,7 +20,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	node2 "github.com/ethereum/go-ethereum/node"
 	"io"
 	log2 "log"
 	"math/big"
@@ -211,42 +210,21 @@ type BlockChain struct {
 	processor  Processor // Block transaction processor interface
 	forker     *ForkChoice
 	vmConfig   vm.Config
+
+	genesis *Genesis
 }
 
-func (bc *BlockChain) Copy(toCopy *BlockChain) {
-	node2.CopyDatabase(bc.db, toCopy.db)
-	bc.snaps.Copy(toCopy.snaps)
-
-	bc.triegc.Copy(toCopy.triegc)
-	bc.gcproc = toCopy.gcproc
-	bc.txLookupLimit = toCopy.txLookupLimit
-	bc.hc.Copy(toCopy.hc)
-
-	bc.genesisBlock = toCopy.genesisBlock
-	bc.currentBlock = toCopy.currentBlock
-	bc.currentFastBlock = toCopy.currentFastBlock
-
-	bc.stateCache = state.NewDatabaseWithConfig(bc.db, &trie.Config{
-		Cache:     bc.cacheConfig.TrieCleanLimit,
-		Journal:   bc.cacheConfig.TrieCleanJournal,
-		Preimages: bc.cacheConfig.Preimages,
-	})
-
-	EmptyCache(bc.bodyCache)
-	EmptyCache(bc.bodyRLPCache)
-	EmptyCache(bc.receiptsCache)
-	EmptyCache(bc.blockCache)
-	EmptyCache(bc.txLookupCache)
-	EmptyCache(bc.futureBlocks)
-}
-
-func EmptyCache(cache *lru.Cache) {
-	for {
-		log2.Printf("cache length: %d ", cache.Len())
-		if cache.Len() == 0 {
-			break
+func (bc *BlockChain) SetTo(toCopy *BlockChain) {
+	err := bc.Reset()
+	if err != nil {
+		log2.Printf("reset error: %s", err)
+	}
+	for number := 1; number <= int(toCopy.CurrentBlock().NumberU64()); number++ {
+		i, err := bc.InsertChain(types.Blocks{toCopy.GetBlockByNumber(uint64(number))})
+		log2.Printf("SetTo, number: %d", number)
+		if err != nil {
+			log2.Printf("SetTo, insertchain, index: %d, error: %s", i, err)
 		}
-		cache.RemoveOldest()
 	}
 }
 
@@ -254,6 +232,10 @@ func EmptyCache(cache *lru.Cache) {
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
+	return NewBlockChainWithGenesis(db, cacheConfig, chainConfig, nil, engine, vmConfig, shouldPreserve, txLookupLimit)
+}
+
+func NewBlockChainWithGenesis(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -284,6 +266,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		futureBlocks:  futureBlocks,
 		engine:        engine,
 		vmConfig:      vmConfig,
+		genesis:       genesis,
 	}
 	bc.forker = NewForkChoice(bc, shouldPreserve)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
@@ -457,6 +440,10 @@ func (bc *BlockChain) empty() bool {
 		}
 	}
 	return true
+}
+
+func (bc *BlockChain) Length() int {
+	return int(bc.CurrentBlock().NumberU64())
 }
 
 // loadLastState loads the last known chain state from the database. This method

@@ -19,7 +19,6 @@ package state
 import (
 	"errors"
 	"fmt"
-
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"

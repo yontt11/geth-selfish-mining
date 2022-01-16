@@ -191,7 +191,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	// Construct the downloader (long sync) and its backing state bloom if snap
 	// sync is requested. The downloader is responsible for deallocating the state
 	// bloom when it's done.
-	h.downloader = downloader.New(h.checkpointNumber, config.Database, h.eventMux, h.chain, nil, h.removePeer)
+	h.downloader = downloader.NewWithPrivateChain(h.checkpointNumber, config.Database, h.eventMux, h.chain, h.privateChain, nil, h.removePeer)
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
@@ -277,18 +277,16 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		log2.Printf("handler - receiving a new blocks, size: %d", blocks.Length())
 		log2.Printf("handler - last block number: %d", int(blocks[blocks.Length()-1].NumberU64()))
 
-		prev := int(h.privateChain.CurrentBlock().NumberU64()) - int(h.chain.CurrentBlock().NumberU64())
+		prev := h.privateChain.Length() - h.chain.Length()
 
 		log2.Printf("handler - private chain current block: %d", int(h.privateChain.CurrentBlock().NumberU64()))
 		log2.Printf("handler - public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
 
-		n, err := h.chain.InsertChain(blocks)
+		n, err := h.chain.InsertChain(blocks) // append block to public chain
+
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}
-
-		log2.Printf("handler - after insertion public chain current block: %d", int(h.chain.CurrentBlock().NumberU64()))
-
 		if h.minerStrategy == miner.HONEST {
 			return n, err
 		}
@@ -297,7 +295,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 		// #-# logic private chain
 		if prev <= 0 { // prev will be < 0 the first time handler receives block which is the same case as prev == 0
-			h.privateChain.Copy(h.chain)
+			h.privateChain.SetTo(h.chain)
 			log2.Printf("handler - private chain current block after copying public chain: %d", int(h.privateChain.CurrentBlock().NumberU64()))
 
 			log2.Printf("handler - unpublished private blocks length: %d", h.unpublishedPrivateBlocks.Length())

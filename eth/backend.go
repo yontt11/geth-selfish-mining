@@ -20,6 +20,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	log2 "log"
 	"math/big"
 	"runtime"
 	"sync"
@@ -134,6 +135,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
+	log2.Printf("genesisHash: %s", genesisHash)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
@@ -142,20 +144,20 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb, stack.ResolvePath(config.TrieCleanCacheJournal)); err != nil {
 		log.Error("Failed to recover state", "error", err)
 	}
-	merger := consensus.NewMerger(chainDb)
+	merger := consensus.NewMerger(chainDb) // todo check private chain
 	eth := &Ethereum{
 		config:            config,
 		merger:            merger,
-		chainDb:           chainDb,
+		chainDb:           chainDb, // todo check private chain
 		eventMux:          stack.EventMux(),
 		accountManager:    stack.AccountManager(),
-		engine:            ethconfig.CreateConsensusEngine(stack, chainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb),
+		engine:            ethconfig.CreateConsensusEngine(stack, chainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb), // todo check privaet chain
 		closeBloomHandler: make(chan struct{}),
 		networkID:         config.NetworkId,
 		gasPrice:          config.Miner.GasPrice,
 		etherbase:         config.Miner.Etherbase,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
-		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
+		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms), // todo check pc
 		p2pServer:         stack.Server(),
 	}
 
@@ -202,7 +204,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		eth.blockchain.SetHead(compat.RewindTo)
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
-	eth.bloomIndexer.Start(eth.blockchain)
+	eth.bloomIndexer.Start(eth.blockchain) // todo check pc
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
@@ -223,14 +225,15 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	privateChainConfig, _, _ := core.SetupGenesisBlockWithOverride(privateChainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
-	privateChain, err := core.NewBlockChain(privateChainDb, cacheConfig, privateChainConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
+	privateChainEngine := ethconfig.CreateConsensusEngine(stack, privateChainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, privateChainDb)
+	privateChain, err := core.NewBlockChain(privateChainDb, cacheConfig, privateChainConfig, privateChainEngine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
 	privateBranchLength := 0
 	privateBranchLengthPointer := &privateBranchLength
 
 	var unpublishedPrivateBlocks = &types.Blocks{}
 
 	if eth.handler, err = newHandler(&handlerConfig{
-		Database:                 chainDb,
+		Database:                 chainDb, // todo check pc
 		Chain:                    eth.blockchain,
 		PrivateChain:             privateChain,
 		UnpublishedPrivateBlocks: unpublishedPrivateBlocks,
@@ -252,7 +255,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	config.Miner.UnpublishedPrivateBlocks = unpublishedPrivateBlocks
 	config.Miner.PrivateBranchLength = privateBranchLengthPointer
 
-	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger)
+	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger) // todo maybe pass in private chain configs (chain config, engine, merger)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}

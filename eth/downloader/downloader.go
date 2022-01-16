@@ -20,6 +20,8 @@ package downloader
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core"
+	log2 "log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -107,8 +109,9 @@ type Downloader struct {
 	syncStatsChainHeight uint64       // Highest block number known when syncing started
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
-	lightchain LightChain
-	blockchain BlockChain
+	lightchain   LightChain
+	blockchain   *core.BlockChain
+	privateChain *core.BlockChain
 
 	// Callbacks
 	dropPeer peerDropFn // Drops a peer for misbehaving
@@ -201,7 +204,11 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, lightchain, dropPeer)
+}
+
+func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, privateChain *core.BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
 	if lightchain == nil {
 		lightchain = chain
 	}
@@ -212,6 +219,7 @@ func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain Bl
 		queue:          newQueue(blockCacheMaxItems, blockCacheInitialItems),
 		peers:          newPeerSet(),
 		blockchain:     chain,
+		privateChain:   privateChain,
 		lightchain:     lightchain,
 		dropPeer:       dropPeer,
 		headerProcCh:   make(chan *headerTask, 1),
@@ -1358,6 +1366,7 @@ func (d *Downloader) processFullSyncContent() error {
 }
 
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
+	log2.Printf("importBlockResults, size: %d", len(results))
 	// Check for any early termination requests
 	if len(results) == 0 {
 		return nil
@@ -1376,11 +1385,14 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	blocks := make([]*types.Block, len(results))
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
+		log2.Printf("importBlockResults, number: %d", result.Header.Number)
 	}
+
 	// Downloaded blocks are always regarded as trusted after the
 	// transition. Because the downloaded chain is guided by the
 	// consensus-layer.
 	if index, err := d.blockchain.InsertChain(blocks); err != nil {
+		log2.Printf("importBlockResults, error inserting chain: %s", err)
 		if index < len(results) {
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		} else {
@@ -1392,6 +1404,10 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
+
+	// set private chain to public chain
+	d.privateChain.SetTo(d.blockchain)
+
 	return nil
 }
 

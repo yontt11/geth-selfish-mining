@@ -20,7 +20,6 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"fmt"
-	node2 "github.com/ethereum/go-ethereum/node"
 	"math"
 	"math/big"
 	mrand "math/rand"
@@ -72,18 +71,6 @@ type HeaderChain struct {
 
 	rand   *mrand.Rand
 	engine consensus.Engine
-}
-
-func (hc *HeaderChain) Copy(toCopy *HeaderChain) {
-	node2.CopyDatabase(hc.chainDb, toCopy.chainDb)
-
-	hc.genesisHeader = toCopy.genesisHeader
-	hc.currentHeader = toCopy.currentHeader
-	hc.currentHeaderHash = toCopy.currentHeaderHash
-
-	EmptyCache(hc.headerCache)
-	EmptyCache(hc.tdCache)
-	EmptyCache(hc.numberCache)
 }
 
 // NewHeaderChain creates a new HeaderChain structure. ProcInterrupt points

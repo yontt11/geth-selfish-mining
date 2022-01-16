@@ -125,8 +125,8 @@ type intervalAdjust struct {
 // and gathering the sealing result.
 type worker struct {
 	config                   *Config
-	chainConfig              *params.ChainConfig
-	engine                   consensus.Engine
+	chainConfig              *params.ChainConfig // todo maybe also for prc
+	engine                   consensus.Engine    // todo pc
 	eth                      Backend
 	chain                    *core.BlockChain
 	privateChain             *core.BlockChain
@@ -159,9 +159,9 @@ type worker struct {
 	wg sync.WaitGroup
 
 	current      *environment                 // An environment for current running cycle.
-	localUncles  map[common.Hash]*types.Block // A set of side blocks generated locally as the possible uncle blocks.
+	localUncles  map[common.Hash]*types.Block // A set of side blocks generated locally as the possible uncle blocks. // todo maybe for pc
 	remoteUncles map[common.Hash]*types.Block // A set of side blocks as the possible uncle blocks.
-	unconfirmed  *unconfirmedBlocks           // A set of locally mined blocks pending canonicalness confirmations.
+	unconfirmed  *unconfirmedBlocks           // A set of locally mined blocks pending canonicalness confirmations. // todo maybe for pc
 
 	mu       sync.RWMutex // The lock used to protect the coinbase and extra fields
 	coinbase common.Address
@@ -679,7 +679,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 
-			prev := int(w.privateChain.CurrentBlock().NumberU64()) - int(w.chain.CurrentBlock().NumberU64())
+			prev := w.privateChain.Length() - w.chain.Length()
 			log2.Printf("worker - prev: %d", prev)
 
 			// Commit block and state to database.
@@ -702,7 +702,7 @@ func (w *worker) resultLoop() {
 				log2.Printf("worker - unpublished private blocks length: %d", w.unpublishedPrivateBlocks.Length())
 				log2.Printf("worker - privateBranchLength : %d", *w.privateBranchLength)
 				// append block to unpublishedPrivateBlocks if this miner is selfish
-				w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block)
+				w.unpublishedPrivateBlocks = w.unpublishedPrivateBlocks.Append(block) // todo unpublishec private blocks not necessary, if we keep track of the index of the last publishec block
 				*w.privateBranchLength = *w.privateBranchLength + 1
 				log2.Printf("worker - unpublished private blocks length after: %d", w.unpublishedPrivateBlocks.Length())
 				log2.Printf("worker - privateBranchLength after: %d", *w.privateBranchLength)
@@ -720,7 +720,7 @@ func (w *worker) resultLoop() {
 				}
 
 				// Insert the block into the set of pending ones to resultLoop for confirmations
-				//w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
+				w.unconfirmed.Insert(block.NumberU64(), block.Hash()) // #-# todo check if we need this after publishing private chain
 			}
 		case <-w.exitCh:
 			return
@@ -1134,7 +1134,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 		select {
 		// #-# control what block gets passed as block to be mined on (like private chain)
 		case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
-			w.unconfirmed.Shift(block.NumberU64() - 1)
+			w.unconfirmed.Shift(block.NumberU64() - 1) // todo unconfirmed to private chain, // todo engine for private chain
 			log.Info("Commit new mining work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
 				"uncles", len(filteredUncles), "txs", w.current.tcount,
 				"gas", block.GasUsed(), "fees", totalFees(block, receipts),

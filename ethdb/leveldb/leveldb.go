@@ -21,6 +21,7 @@
 package leveldb
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -82,40 +83,6 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
-func (db *Database) Copy(toCopy *Database) {
-	copyDatabase(db.db, toCopy.db)
-
-	db.compTimeMeter = toCopy.compTimeMeter
-	db.compReadMeter = toCopy.compReadMeter
-	db.compWriteMeter = toCopy.compWriteMeter
-	db.writeDelayNMeter = toCopy.writeDelayNMeter
-	db.writeDelayMeter = toCopy.writeDelayMeter
-	db.diskSizeGauge = toCopy.diskSizeGauge
-	db.diskReadMeter = toCopy.diskReadMeter
-	db.diskWriteMeter = toCopy.diskWriteMeter
-	db.memCompGauge = toCopy.memCompGauge
-	db.level0CompGauge = toCopy.level0CompGauge
-	db.nonlevel0CompGauge = toCopy.nonlevel0CompGauge
-	db.seekCompGauge = toCopy.seekCompGauge
-}
-
-func copyDatabase(db *leveldb.DB, toCopy *leveldb.DB) {
-	// deleting previous data from db
-	iter := db.NewIterator(nil, nil)
-	for iter.Next() {
-		key := iter.Key()
-		db.Delete(key, nil)
-	}
-
-	// copy data from other db
-	iter = toCopy.NewIterator(nil, nil)
-	for iter.Next() {
-		key := iter.Key()
-		value := iter.Value()
-		db.Put(key, value, nil)
-	}
-}
-
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
@@ -158,6 +125,7 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
+
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		fn:       file,
@@ -165,6 +133,7 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 		log:      logger,
 		quitChan: make(chan chan error),
 	}
+
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
 	ldb.compWriteMeter = metrics.NewRegisteredMeter(namespace+"compact/output", nil)
@@ -181,6 +150,16 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	// Start up the metrics gathering and return
 	go ldb.meter(metricsGatheringInterval)
 	return ldb, nil
+}
+
+func headerHashKey(number uint64) []byte {
+	return append(append([]byte("h"), encodeBlockNumber(number)...), []byte("n")...)
+}
+
+func encodeBlockNumber(number uint64) []byte {
+	enc := make([]byte, 8)
+	binary.BigEndian.PutUint64(enc, number)
+	return enc
 }
 
 // configureOptions sets some default options, then runs the provided setter.

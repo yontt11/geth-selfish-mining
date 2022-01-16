@@ -96,13 +96,6 @@ type freezer struct {
 	closeOnce sync.Once
 }
 
-func (f *freezer) Copy(toCopy *freezer) {
-	f.frozen = toCopy.frozen
-	f.threshold = toCopy.threshold
-	f.readonly = toCopy.readonly
-	f.tables = toCopy.tables
-}
-
 // newFreezer creates a chain freezer that moves ancient chain data into
 // append-only flat file containers.
 //
