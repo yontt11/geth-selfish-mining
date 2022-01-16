@@ -621,8 +621,6 @@ type closeTrackingDB struct {
 	n *Node
 }
 
-// makes data type public
-
 func (db *closeTrackingDB) Close() error {
 	db.n.lock.Lock()
 	delete(db.n.databases, db)

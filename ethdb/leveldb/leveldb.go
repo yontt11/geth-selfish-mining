@@ -21,7 +21,6 @@
 package leveldb
 
 import (
-	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -125,7 +124,6 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
-
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		fn:       file,
@@ -133,7 +131,6 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 		log:      logger,
 		quitChan: make(chan chan error),
 	}
-
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
 	ldb.compWriteMeter = metrics.NewRegisteredMeter(namespace+"compact/output", nil)
@@ -150,16 +147,6 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	// Start up the metrics gathering and return
 	go ldb.meter(metricsGatheringInterval)
 	return ldb, nil
-}
-
-func headerHashKey(number uint64) []byte {
-	return append(append([]byte("h"), encodeBlockNumber(number)...), []byte("n")...)
-}
-
-func encodeBlockNumber(number uint64) []byte {
-	enc := make([]byte, 8)
-	binary.BigEndian.PutUint64(enc, number)
-	return enc
 }
 
 // configureOptions sets some default options, then runs the provided setter.

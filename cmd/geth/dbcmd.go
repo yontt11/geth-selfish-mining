@@ -265,7 +265,6 @@ func removeDB(ctx *cli.Context) error {
 	} else {
 		log.Info("Light node database missing", "path", path)
 	}
-
 	return nil
 }
 
@@ -545,7 +544,6 @@ func freezerInspect(ctx *cli.Context) error {
 	} else {
 		f.DumpIndex(start, end)
 	}
-
 	return nil
 }
 
