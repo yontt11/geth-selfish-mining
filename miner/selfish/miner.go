@@ -17,6 +17,10 @@ func OnOthersFoundBlock(
 	log2.Printf("OnOthersFoundBlock: %d", prev)
 
 	if prev <= 0 {
+		// if this method is called while SetTo is still running, prev is less than 0 because SetTo resets the
+		// private chain before inserting the public chain's blocks into it
+		// Therefore, while SetTo is running, the private chain's length is temporarily shorter
+		// Since prev would technically be zero after SeTo is done, the rules for prev = 0 are being applied
 		privateChain.SetTo(publicChain)
 		*privateBranchLength = 0
 	} else if prev == 1 {
@@ -24,12 +28,12 @@ func OnOthersFoundBlock(
 		publishBlock(privateChain.CurrentBlock(), publicChain, eventMux)
 	} else if prev == 2 {
 		// publish all of the private chain
-		for number := int(publicChain.CurrentBlock().NumberU64()); number <= int(privateChain.CurrentBlock().NumberU64()); number++ {
+		for number := 1; number <= int(privateChain.CurrentBlock().NumberU64()); number++ {
 			block := privateChain.GetBlockByNumber(uint64(number))
 			publishBlock(block, publicChain, eventMux)
 		}
 		*privateBranchLength = 0
-	} else if prev > 2 {
+	} else { // pev > 2
 		// publish first unpublished block in private block.
 		firstUnpublishedBlock := privateChain.GetBlockByNumber(publicChain.CurrentBlock().NumberU64())
 		publishBlock(firstUnpublishedBlock, publicChain, eventMux)
@@ -49,7 +53,7 @@ func OnFoundBlock(
 
 	if prev == 0 && *privateBranchLength == 2 {
 		// publish all of the private chain
-		for number := int(publicChain.CurrentBlock().NumberU64() + 1); number <= int(privateChain.CurrentBlock().NumberU64()); number++ {
+		for number := 1; number <= int(privateChain.CurrentBlock().NumberU64()); number++ {
 			block := privateChain.GetBlockByNumber(uint64(number))
 			publishBlock(block, publicChain, eventMux)
 		}
@@ -67,11 +71,15 @@ func OnImportedBlocks(
 
 	// todo change logic depending on prev
 
+	log2.Printf("OnImportedBlocks: %d", prev)
 	privateChain.SetTo(publicChain)
 	*privateBranchLength = 0
 }
 
 func publishBlock(block *types.Block, publicChain *core.BlockChain, eventMux *event.TypeMux) {
-	publicChain.InsertChain(types.Blocks{block})
+	n, err := publicChain.InsertChain(types.Blocks{block})
+	if err != nil {
+		log2.Printf("error publish block: %d, %s", n, err)
+	}
 	eventMux.Post(core.NewMinedBlockEvent{Block: block})
 }

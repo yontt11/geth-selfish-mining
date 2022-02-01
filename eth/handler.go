@@ -214,6 +214,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.chain.CurrentBlock().NumberU64()
 	}
 	inserter := func(blocks types.Blocks) (int, error) {
+		log2.Printf("inserter")
 		// All the block fetcher activities should be disabled
 		// after the transition. Print the warning log.
 		if h.merger.PoSFinalized() {
@@ -243,13 +244,16 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// accept each others' blocks until a restart. Unfortunately we haven't figured
 		// out a way yet where nodes can decide unilaterally whether the network is new
 		// or not. This should be fixed if we figure out a solution.\
-
-		// Since we know this is a new network,
-		// don't return here in order to avoid sync issues
+		//
+		// Since we know this is a new network, don't return here in order to avoid sync issues
+		// also, snap sync is being marked as done by setting it to 0
 		if atomic.LoadUint32(&h.snapSync) == 1 {
+			log2.Printf("fast syncing, discarded propagated block")
 			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
+			atomic.StoreUint32(&h.snapSync, 0)
 			//return 0, nil
 		}
+
 		if h.merger.TDDReached() {
 			// The blocks from the p2p network is regarded as untrusted
 			// after the transition. In theory block gossip should be disabled
@@ -278,6 +282,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 		n, err := h.chain.InsertChain(blocks) // append block to public chain
 
+		log2.Printf("inserted chain: %d", blocks[0].NumberU64())
+
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		} else {
@@ -295,7 +301,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		for {
 			time.Sleep(time.Second)
 			if h.chain != nil {
-				h.chain.Print()
+				//	h.chain.Print()
 			}
 		}
 	}()
