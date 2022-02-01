@@ -408,17 +408,31 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 }
 
 func (bc *BlockChain) SetTo(toCopy *BlockChain) {
-	err := bc.Reset()
-	if err != nil {
-		log2.Printf("reset error: %s", err)
-	}
+	bc.Reset()
+
 	for number := 1; number <= int(toCopy.CurrentBlock().NumberU64()); number++ {
-		i, err := bc.InsertChain(types.Blocks{toCopy.GetBlockByNumber(uint64(number))})
-		log2.Printf("SetTo, number: %d", number)
-		if err != nil {
-			log2.Printf("SetTo, insertchain, index: %d, error: %s", i, err)
+		hashes := rawdb.ReadAllHashes(toCopy.db, uint64(number))
+
+		for _, hash := range hashes {
+			block := toCopy.GetBlock(hash, uint64(number))
+			bc.InsertChain(types.Blocks{block})
 		}
 	}
+}
+
+func (bc *BlockChain) Print() {
+	chain := "["
+	for i := 1; i <= int(bc.CurrentBlock().NumberU64()); i++ {
+		block := bc.GetBlockByNumber(uint64(i))
+		if block != nil {
+			address := string(block.Coinbase().Hex()[len(block.Coinbase().Hex())-1])
+			chain += address
+			chain += ", "
+		}
+	}
+	chain += "]"
+	log2.Printf(chain)
+	log2.Printf("----------")
 }
 
 // empty returns an indicator whether the blockchain is empty.

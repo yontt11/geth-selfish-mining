@@ -20,7 +20,6 @@ package eth
 import (
 	"errors"
 	"fmt"
-	log2 "log"
 	"math/big"
 	"runtime"
 	"sync"
@@ -78,8 +77,10 @@ type Ethereum struct {
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
 
-	eventMux       *event.TypeMux
-	engine         consensus.Engine
+	eventMux     *event.TypeMux
+	engine       consensus.Engine
+	miningEngine consensus.Engine // engine used for mining
+
 	accountManager *accounts.Manager
 
 	bloomRequests     chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
@@ -135,7 +136,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
-	log2.Printf("genesisHash: %s", genesisHash)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
@@ -144,21 +144,36 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb, stack.ResolvePath(config.TrieCleanCacheJournal)); err != nil {
 		log.Error("Failed to recover state", "error", err)
 	}
-	merger := consensus.NewMerger(chainDb) // todo check private chain
+	merger := consensus.NewMerger(chainDb)
+
+	// private chain config
+	privateChainDb, err := stack.OpenDatabaseWithFreezer("privatechaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/privatechaindata/", false)
+	if err != nil {
+		return nil, err
+	}
+	privateChainConfig, _, _ := core.SetupGenesisBlockWithOverride(privateChainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
+	privateEngine := ethconfig.CreateConsensusEngine(stack, privateChainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, privateChainDb)
+
 	eth := &Ethereum{
 		config:            config,
 		merger:            merger,
-		chainDb:           chainDb, // todo check private chain
+		chainDb:           chainDb,
 		eventMux:          stack.EventMux(),
 		accountManager:    stack.AccountManager(),
-		engine:            ethconfig.CreateConsensusEngine(stack, chainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb), // todo check privaet chain
+		engine:            ethconfig.CreateConsensusEngine(stack, chainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb),
 		closeBloomHandler: make(chan struct{}),
 		networkID:         config.NetworkId,
 		gasPrice:          config.Miner.GasPrice,
 		etherbase:         config.Miner.Etherbase,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
-		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms), // todo check pc
+		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:         stack.Server(),
+	}
+
+	if config.Miner.MinerStrategy.IsHonest() {
+		eth.miningEngine = eth.engine
+	} else {
+		eth.miningEngine = privateEngine
 	}
 
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
@@ -204,7 +219,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		eth.blockchain.SetHead(compat.RewindTo)
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
-	eth.bloomIndexer.Start(eth.blockchain) // todo check pc
+
+	privateChain, err := core.NewBlockChain(privateChainDb, cacheConfig, privateChainConfig, privateEngine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
+	privateBranchLength := 0
+	privateBranchLengthPointer := &privateBranchLength
+
+	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
@@ -218,44 +238,30 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		checkpoint = params.TrustedCheckpoints[genesisHash]
 	}
 
-	// assemble private chain
-	// Assemble the Ethereum object
-	privateChainDb, err := stack.OpenDatabaseWithFreezer("privatechaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/privatechaindata/", false)
-	if err != nil {
-		return nil, err
-	}
-	privateChainConfig, _, _ := core.SetupGenesisBlockWithOverride(privateChainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
-	privateChainEngine := ethconfig.CreateConsensusEngine(stack, privateChainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, privateChainDb)
-	privateChain, err := core.NewBlockChain(privateChainDb, cacheConfig, privateChainConfig, privateChainEngine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
-	privateBranchLength := 0
-	privateBranchLengthPointer := &privateBranchLength
-
-	var unpublishedPrivateBlocks = &types.Blocks{}
-
 	if eth.handler, err = newHandler(&handlerConfig{
-		Database:                 chainDb, // todo check pc
-		Chain:                    eth.blockchain,
-		PrivateChain:             privateChain,
-		UnpublishedPrivateBlocks: unpublishedPrivateBlocks,
-		PrivateBranchLength:      privateBranchLengthPointer,
-		MinerStrategy:            config.Miner.MinerStrategy,
-		TxPool:                   eth.txPool,
-		Merger:                   merger,
-		Network:                  config.NetworkId,
-		Sync:                     config.SyncMode,
-		BloomCache:               uint64(cacheLimit),
-		EventMux:                 eth.eventMux,
-		Checkpoint:               checkpoint,
-		Whitelist:                config.Whitelist,
+		Database:            chainDb,
+		Chain:               eth.blockchain,
+		PrivateChain:        privateChain,
+		PrivateBranchLength: privateBranchLengthPointer,
+		MinerStrategy:       config.Miner.MinerStrategy,
+		TxPool:              eth.txPool,
+		Merger:              merger,
+		Network:             config.NetworkId,
+		Sync:                config.SyncMode,
+		BloomCache:          uint64(cacheLimit),
+		EventMux:            eth.eventMux,
+		Checkpoint:          checkpoint,
+		Whitelist:           config.Whitelist,
 	}); err != nil {
 		return nil, err
 	}
 
 	config.Miner.PrivateChain = privateChain
-	config.Miner.UnpublishedPrivateBlocks = unpublishedPrivateBlocks
+	config.Miner.PrivateChainConfig = privateChainConfig
 	config.Miner.PrivateBranchLength = privateBranchLengthPointer
+	config.Miner.PrivateChainEngine = privateEngine
 
-	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger) // todo maybe pass in private chain configs (chain config, engine, merger)
+	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
@@ -475,7 +481,8 @@ func (s *Ethereum) StartMining(threads int) error {
 	type threaded interface {
 		SetThreads(threads int)
 	}
-	if th, ok := s.engine.(threaded); ok {
+
+	if th, ok := s.miningEngine.(threaded); ok {
 		log.Info("Updated mining threads", "threads", threads)
 		if threads == 0 {
 			threads = -1 // Disable the miner from within
@@ -497,9 +504,9 @@ func (s *Ethereum) StartMining(threads int) error {
 			return fmt.Errorf("etherbase missing: %v", err)
 		}
 		var cli *clique.Clique
-		if c, ok := s.engine.(*clique.Clique); ok {
+		if c, ok := s.miningEngine.(*clique.Clique); ok {
 			cli = c
-		} else if cl, ok := s.engine.(*beacon.Beacon); ok {
+		} else if cl, ok := s.miningEngine.(*beacon.Beacon); ok {
 			if c, ok := cl.InnerEngine().(*clique.Clique); ok {
 				cli = c
 			}
@@ -528,7 +535,8 @@ func (s *Ethereum) StopMining() {
 	type threaded interface {
 		SetThreads(threads int)
 	}
-	if th, ok := s.engine.(threaded); ok {
+
+	if th, ok := s.miningEngine.(threaded); ok {
 		th.SetThreads(-1)
 	}
 	// Stop the block creating itself
