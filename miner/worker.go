@@ -141,13 +141,14 @@ type worker struct {
 	pendingLogsFeed event.Feed
 
 	// Subscriptions
-	mux          *event.TypeMux
-	txsCh        chan core.NewTxsEvent
-	txsSub       event.Subscription
-	chainHeadCh  chan core.ChainHeadEvent
-	chainHeadSub event.Subscription
-	chainSideCh  chan core.ChainSideEvent
-	chainSideSub event.Subscription
+	mux                *event.TypeMux
+	txsCh              chan core.NewTxsEvent
+	txsSub             event.Subscription
+	chainHeadCh        chan core.ChainHeadEvent
+	chainHeadSub       event.Subscription
+	chainSideCh        chan core.ChainSideEvent
+	chainSideSub       event.Subscription
+	publicChainBlockCh chan core.ChainBlockEvent
 
 	// Channels
 	newWorkCh          chan *newWorkReq
@@ -215,6 +216,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		txsCh:               make(chan core.NewTxsEvent, txChanSize),
 		chainHeadCh:         make(chan core.ChainHeadEvent, chainHeadChanSize),
 		chainSideCh:         make(chan core.ChainSideEvent, chainSideChanSize),
+		publicChainBlockCh:  make(chan core.ChainBlockEvent, chainHeadChanSize+chainSideChanSize),
 		newWorkCh:           make(chan *newWorkReq),
 		taskCh:              make(chan *task),
 		resultCh:            make(chan *types.Block, resultQueueSize),
@@ -241,6 +243,11 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 	// Subscribe events for blockchain
 	worker.chainHeadSub = worker.chain.SubscribeChainHeadEvent(worker.chainHeadCh)
 	worker.chainSideSub = worker.chain.SubscribeChainSideEvent(worker.chainSideCh)
+
+	// selfish miner needs to subscribe to block event of the public chain because all new blocks from public chain are possible uncles
+	if worker.minerStrategy.IsSelfish() {
+		worker.publicChain.SetChainBlockEventSubscription(worker.publicChainBlockCh)
+	}
 
 	// Sanitize recommit interval if the user-specified one is too short.
 	recommit := worker.config.Recommit
@@ -486,43 +493,10 @@ func (w *worker) mainLoop() {
 			w.commitNewWork(req.interrupt, req.noempty, req.timestamp)
 
 		case ev := <-w.chainSideCh:
-			// Short circuit for duplicate side blocks
-			if _, exist := w.localUncles[ev.Block.Hash()]; exist {
-				continue
-			}
-			if _, exist := w.remoteUncles[ev.Block.Hash()]; exist {
-				continue
-			}
-			// Add side block to possible uncle block set depending on the author.
-			if w.isLocalBlock != nil && w.isLocalBlock(ev.Block.Header()) {
-				w.localUncles[ev.Block.Hash()] = ev.Block
-			} else {
-				w.remoteUncles[ev.Block.Hash()] = ev.Block
-			}
-			// If our mining block contains less than 2 uncle blocks,
-			// add the new uncle block if valid and regenerate a mining block.
-			if w.isRunning() && w.current != nil && w.current.uncles.Cardinality() < 2 {
-				start := time.Now()
-				if err := w.commitUncle(w.current, ev.Block.Header()); err == nil {
-					var uncles []*types.Header
-					w.current.uncles.Each(func(item interface{}) bool {
-						hash, ok := item.(common.Hash)
-						if !ok {
-							return false
-						}
-						uncle, exist := w.localUncles[hash]
-						if !exist {
-							uncle, exist = w.remoteUncles[hash]
-						}
-						if !exist {
-							return false
-						}
-						uncles = append(uncles, uncle.Header())
-						return false
-					})
-					w.commit(uncles, nil, true, start)
-				}
-			}
+			w.onReceivedBlock(ev.Block)
+
+		case ev := <-w.publicChainBlockCh:
+			w.onReceivedBlock(ev.Block)
 
 		case ev := <-w.txsCh:
 			// Apply transactions to the pending state if we're not mining.
@@ -571,6 +545,48 @@ func (w *worker) mainLoop() {
 			return
 		case <-w.chainSideSub.Err():
 			return
+		}
+	}
+}
+
+func (w *worker) onReceivedBlock(block *types.Block) {
+	// Short circuit for duplicate side blocks
+	if _, exist := w.localUncles[block.Hash()]; exist {
+		return
+	}
+	if _, exist := w.remoteUncles[block.Hash()]; exist {
+		return
+	}
+	// Add side block to possible uncle block set depending on the author.
+	if w.isLocalBlock != nil && w.isLocalBlock(block.Header()) {
+		w.localUncles[block.Hash()] = block
+		log2.Printf("add side block to possbile local uncles")
+	} else {
+		w.remoteUncles[block.Hash()] = block
+		log2.Printf("add side block to possbile remote uncles")
+	}
+	// If our mining block contains less than 2 uncle blocks,
+	// add the new uncle block if valid and regenerate a mining block.
+	if w.isRunning() && w.current != nil && w.current.uncles.Cardinality() < 2 {
+		start := time.Now()
+		if err := w.commitUncle(w.current, block.Header()); err == nil {
+			var uncles []*types.Header
+			w.current.uncles.Each(func(item interface{}) bool {
+				hash, ok := item.(common.Hash)
+				if !ok {
+					return false
+				}
+				uncle, exist := w.localUncles[hash]
+				if !exist {
+					uncle, exist = w.remoteUncles[hash]
+				}
+				if !exist {
+					return false
+				}
+				uncles = append(uncles, uncle.Header())
+				return false
+			})
+			w.commit(uncles, nil, true, start)
 		}
 	}
 }
@@ -1066,11 +1082,9 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	receipts := copyReceipts(w.current.receipts)
 	s := w.current.state.Copy()
 
-	filteredUncles := make([]*types.Header, len(uncles))
+	var filteredUncles []*types.Header
 
 	switch w.minerStrategy {
-	case SelfishNoUncles:
-		filteredUncles = nil
 	case SelfishOwnUncles:
 		for _, uncle := range uncles {
 			if w.isLocalBlock(uncle) {
@@ -1080,6 +1094,9 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	case SelfishAllUncles, HONEST:
 		filteredUncles = uncles
 	}
+
+	log2.Printf("uncle length: %d", len(uncles))
+	log2.Printf("filtered length: %d", len(filteredUncles))
 
 	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, filteredUncles, receipts)
 	if err != nil {

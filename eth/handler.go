@@ -214,7 +214,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.chain.CurrentBlock().NumberU64()
 	}
 	inserter := func(blocks types.Blocks) (int, error) {
-		log2.Printf("inserter")
 		// All the block fetcher activities should be disabled
 		// after the transition. Print the warning log.
 		if h.merger.PoSFinalized() {
@@ -282,12 +281,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 		n, err := h.chain.InsertChain(blocks) // append block to public chain
 
-		log2.Printf("inserted chain: %d", blocks[0].NumberU64())
-
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		} else {
-			log2.Printf("error inserting blocks: %d, %s", n, err)
 		}
 
 		if h.minerStrategy.IsSelfish() {
@@ -301,7 +296,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		for {
 			time.Sleep(time.Second)
 			if h.chain != nil {
-				//	h.chain.Print()
+				h.chain.Print()
 			}
 		}
 	}()
