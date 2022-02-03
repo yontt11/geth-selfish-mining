@@ -20,7 +20,6 @@ import (
 	"errors"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/miner/selfish"
-	log2 "log"
 	"math"
 	"math/big"
 	"sync"
@@ -84,6 +83,7 @@ type handlerConfig struct {
 	Chain               *core.BlockChain // Blockchain to serve data from
 	PrivateChain        *core.BlockChain
 	PrivateBranchLength *int
+	NextToPublish       *int
 	MinerStrategy       miner.Strategy
 	TxPool              txPool                    // Transaction pool to propagate from
 	Merger              *consensus.Merger         // The manager for eth1/2 transition
@@ -110,6 +110,7 @@ type handler struct {
 	chain               *core.BlockChain
 	privateChain        *core.BlockChain
 	privateBranchLength *int
+	nextToPublish       *int
 	minerStrategy       miner.Strategy
 
 	maxPeers int
@@ -151,6 +152,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		chain:               config.Chain,
 		privateChain:        config.PrivateChain,
 		privateBranchLength: config.PrivateBranchLength,
+		nextToPublish:       config.NextToPublish,
 		minerStrategy:       config.MinerStrategy,
 		peers:               newPeerSet(),
 		merger:              config.Merger,
@@ -189,7 +191,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	// Construct the downloader (long sync) and its backing state bloom if snap
 	// sync is requested. The downloader is responsible for deallocating the state
 	// bloom when it's done.
-	h.downloader = downloader.NewWithPrivateChain(h.checkpointNumber, config.Database, h.eventMux, h.chain, h.privateChain, h.privateBranchLength, h.minerStrategy.IsSelfish(), nil, h.removePeer)
+	h.downloader = downloader.NewWithPrivateChain(h.checkpointNumber, config.Database, h.eventMux, h.chain, h.privateChain, h.privateBranchLength, h.nextToPublish, h.minerStrategy.IsSelfish(), nil, h.removePeer)
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
@@ -247,7 +249,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// Since we know this is a new network, don't return here in order to avoid sync issues
 		// also, snap sync is being marked as done by setting it to 0
 		if atomic.LoadUint32(&h.snapSync) == 1 {
-			log2.Printf("fast syncing, discarded propagated block")
 			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
 			atomic.StoreUint32(&h.snapSync, 0)
 			//return 0, nil
@@ -286,7 +287,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 
 		if h.minerStrategy.IsSelfish() {
-			selfish.OnOthersFoundBlock(prev, h.chain, h.privateChain, h.privateBranchLength, h.eventMux)
+			selfish.OnOthersFoundBlock(prev, h.chain, h.privateChain, h.privateBranchLength, h.nextToPublish, h.eventMux)
 		}
 
 		return n, err

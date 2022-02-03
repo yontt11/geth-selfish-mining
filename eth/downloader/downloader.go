@@ -114,6 +114,7 @@ type Downloader struct {
 	blockchain          *core.BlockChain
 	privateChain        *core.BlockChain
 	privateBranchLength *int
+	nextToPublish       *int
 	selfish             bool
 
 	// Callbacks
@@ -208,10 +209,10 @@ type BlockChain interface {
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
 func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
-	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, nil, false, lightchain, dropPeer)
+	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, nil, nil, false, lightchain, dropPeer)
 }
 
-func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, privateChain *core.BlockChain, privateBranchLength *int, selfish bool, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, privateChain *core.BlockChain, privateBranchLength *int, nextToPublish *int, selfish bool, lightchain LightChain, dropPeer peerDropFn) *Downloader {
 	if lightchain == nil {
 		lightchain = chain
 	}
@@ -224,6 +225,7 @@ func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.T
 		blockchain:          chain,
 		privateChain:        privateChain,
 		privateBranchLength: privateBranchLength,
+		nextToPublish:       nextToPublish,
 		selfish:             selfish,
 		lightchain:          lightchain,
 		dropPeer:            dropPeer,
@@ -1411,7 +1413,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	}
 
 	if d.selfish {
-		selfish.OnImportedBlocks(blocks, prev, d.blockchain, d.privateChain, d.privateBranchLength, d.mux)
+		selfish.OnImportedBlocks(blocks, prev, d.blockchain, d.privateChain, d.privateBranchLength, d.nextToPublish, d.mux)
 	}
 
 	return nil

@@ -134,6 +134,7 @@ type worker struct {
 	chain        *core.BlockChain // chain that the worker is working on (privateChain for selfish miner, publicChain for honest miner)
 
 	privateBranchLength *int
+	nextToPublish       *int
 	minerStrategy       Strategy
 	merger              *consensus.Merger
 
@@ -207,6 +208,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		publicChain:         eth.BlockChain(),
 		privateChain:        config.PrivateChain,
 		privateBranchLength: config.PrivateBranchLength,
+		nextToPublish:       config.NextToPublish,
 		minerStrategy:       config.MinerStrategy,
 		merger:              merger,
 		isLocalBlock:        isLocalBlock,
@@ -560,10 +562,8 @@ func (w *worker) onReceivedBlock(block *types.Block) {
 	// Add side block to possible uncle block set depending on the author.
 	if w.isLocalBlock != nil && w.isLocalBlock(block.Header()) {
 		w.localUncles[block.Hash()] = block
-		log2.Printf("add side block to possbile local uncles")
 	} else {
 		w.remoteUncles[block.Hash()] = block
-		log2.Printf("add side block to possbile remote uncles")
 	}
 	// If our mining block contains less than 2 uncle blocks,
 	// add the new uncle block if valid and regenerate a mining block.
@@ -715,7 +715,7 @@ func (w *worker) resultLoop() {
 				// Broadcast the block and announce chain insertion event
 				w.mux.Post(core.NewMinedBlockEvent{Block: block})
 			} else {
-				selfish.OnFoundBlock(prev, w.publicChain, w.privateChain, w.privateBranchLength, w.mux)
+				selfish.OnFoundBlock(prev, w.publicChain, w.privateChain, w.privateBranchLength, w.nextToPublish, w.mux)
 			}
 			// Insert the block into the set of pending ones to resultLoop for confirmations
 			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
@@ -1094,9 +1094,6 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	case SelfishAllUncles, HONEST:
 		filteredUncles = uncles
 	}
-
-	log2.Printf("uncle length: %d", len(uncles))
-	log2.Printf("filtered length: %d", len(filteredUncles))
 
 	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, filteredUncles, receipts)
 	if err != nil {

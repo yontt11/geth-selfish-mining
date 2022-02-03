@@ -74,6 +74,7 @@ type Config struct {
 	PrivateChainConfig  *params.ChainConfig
 	PrivateChainEngine  consensus.Engine
 	PrivateBranchLength *int
+	NextToPublish       *int
 }
 
 // Miner creates blocks and searches for proof-of-work values.

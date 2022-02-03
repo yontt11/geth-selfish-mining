@@ -224,6 +224,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	privateBranchLength := 0
 	privateBranchLengthPointer := &privateBranchLength
 
+	nextToPublish := 1
+	nextToPublishPointer := &nextToPublish
+
 	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
@@ -243,6 +246,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Chain:               eth.blockchain,
 		PrivateChain:        privateChain,
 		PrivateBranchLength: privateBranchLengthPointer,
+		NextToPublish:       nextToPublishPointer,
 		MinerStrategy:       config.Miner.MinerStrategy,
 		TxPool:              eth.txPool,
 		Merger:              merger,
@@ -259,6 +263,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	config.Miner.PrivateChain = privateChain
 	config.Miner.PrivateChainConfig = privateChainConfig
 	config.Miner.PrivateBranchLength = privateBranchLengthPointer
+	config.Miner.NextToPublish = nextToPublishPointer
 	config.Miner.PrivateChainEngine = privateEngine
 
 	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger)
