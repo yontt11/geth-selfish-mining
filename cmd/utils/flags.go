@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	log2 "log"
 	"math"
 	"math/big"
 	"os"
@@ -486,6 +487,11 @@ var (
 			"2=selfish with inclusion of own uncle blocks\n" +
 			"3=selfish with inclusion of all uncle blocks\n",
 		Value: 0}
+	MinerLogFileFlag = cli.StringFlag{
+		Name:  "miner.logFile",
+		Usage: "Path of the file where the logs will be written to",
+	}
+
 	// Account settings
 	UnlockedAccountFlag = cli.StringFlag{
 		Name:  "unlock",
@@ -1412,7 +1418,12 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Noverify = ctx.GlobalBool(MinerNoVerifyFlag.Name)
 	}
 	if ctx.GlobalIsSet(MinerStrategyFlag.Name) {
-		cfg.MinerStrategy = miner.Strategy(ctx.GlobalInt(MinerNotifyFlag.Name))
+		cfg.MinerStrategy = miner.Strategy(ctx.GlobalInt(MinerStrategyFlag.Name))
+	}
+	if ctx.GlobalIsSet(MinerLogFileFlag.Name) {
+		minerLogFile := ctx.GlobalString(MinerLogFileFlag.Name)
+		f, _ := os.OpenFile(minerLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		log2.SetOutput(f)
 	}
 	if ctx.GlobalIsSet(LegacyMinerGasTargetFlag.Name) {
 		log.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")

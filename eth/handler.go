@@ -18,6 +18,8 @@ package eth
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/miner"
+	"github.com/ethereum/go-ethereum/miner/selfish"
 	"math"
 	"math/big"
 	"sync"
@@ -77,16 +79,20 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	Database   ethdb.Database            // Database for direct sync insertions
-	Chain      *core.BlockChain          // Blockchain to serve data from
-	TxPool     txPool                    // Transaction pool to propagate from
-	Merger     *consensus.Merger         // The manager for eth1/2 transition
-	Network    uint64                    // Network identifier to adfvertise
-	Sync       downloader.SyncMode       // Whether to snap or full sync
-	BloomCache uint64                    // Megabytes to alloc for snap sync bloom
-	EventMux   *event.TypeMux            // Legacy event mux, deprecate for `feed`
-	Checkpoint *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
-	Whitelist  map[uint64]common.Hash    // Hard coded whitelist for sync challenged
+	Database            ethdb.Database   // Database for direct sync insertions
+	Chain               *core.BlockChain // Blockchain to serve data from
+	PrivateChain        *core.BlockChain
+	PrivateBranchLength *int
+	NextToPublish       *int
+	MinerStrategy       miner.Strategy
+	TxPool              txPool                    // Transaction pool to propagate from
+	Merger              *consensus.Merger         // The manager for eth1/2 transition
+	Network             uint64                    // Network identifier to adfvertise
+	Sync                downloader.SyncMode       // Whether to snap or full sync
+	BloomCache          uint64                    // Megabytes to alloc for snap sync bloom
+	EventMux            *event.TypeMux            // Legacy event mux, deprecate for `feed`
+	Checkpoint          *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
+	Whitelist           map[uint64]common.Hash    // Hard coded whitelist for sync challenged
 }
 
 type handler struct {
@@ -99,9 +105,14 @@ type handler struct {
 	checkpointNumber uint64      // Block number for the sync progress validator to cross reference
 	checkpointHash   common.Hash // Block hash for the sync progress validator to cross reference
 
-	database ethdb.Database
-	txpool   txPool
-	chain    *core.BlockChain
+	database            ethdb.Database
+	txpool              txPool
+	chain               *core.BlockChain
+	privateChain        *core.BlockChain
+	privateBranchLength *int
+	nextToPublish       *int
+	minerStrategy       miner.Strategy
+
 	maxPeers int
 
 	downloader   *downloader.Downloader
@@ -131,18 +142,24 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	if config.EventMux == nil {
 		config.EventMux = new(event.TypeMux) // Nicety initialization for tests
 	}
+
 	h := &handler{
-		networkID:  config.Network,
-		forkFilter: forkid.NewFilter(config.Chain),
-		eventMux:   config.EventMux,
-		database:   config.Database,
-		txpool:     config.TxPool,
-		chain:      config.Chain,
-		peers:      newPeerSet(),
-		merger:     config.Merger,
-		whitelist:  config.Whitelist,
-		quitSync:   make(chan struct{}),
+		networkID:           config.Network,
+		forkFilter:          forkid.NewFilter(config.Chain),
+		eventMux:            config.EventMux,
+		database:            config.Database,
+		txpool:              config.TxPool,
+		chain:               config.Chain,
+		privateChain:        config.PrivateChain,
+		privateBranchLength: config.PrivateBranchLength,
+		nextToPublish:       config.NextToPublish,
+		minerStrategy:       config.MinerStrategy,
+		peers:               newPeerSet(),
+		merger:              config.Merger,
+		whitelist:           config.Whitelist,
+		quitSync:            make(chan struct{}),
 	}
+
 	if config.Sync == downloader.FullSync {
 		// The database seems empty as the current block is the genesis. Yet the snap
 		// block is ahead, so snap sync was enabled for this node at a certain point.
@@ -174,7 +191,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	// Construct the downloader (long sync) and its backing state bloom if snap
 	// sync is requested. The downloader is responsible for deallocating the state
 	// bloom when it's done.
-	h.downloader = downloader.New(h.checkpointNumber, config.Database, h.eventMux, h.chain, nil, h.removePeer)
+	h.downloader = downloader.NewWithPrivateChain(h.checkpointNumber, config.Database, h.eventMux, h.chain, h.privateChain, h.privateBranchLength, h.nextToPublish, h.minerStrategy.IsSelfish(), nil, h.removePeer)
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
@@ -227,11 +244,16 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// clause when starting up a new network, because snap-syncing miners might not
 		// accept each others' blocks until a restart. Unfortunately we haven't figured
 		// out a way yet where nodes can decide unilaterally whether the network is new
-		// or not. This should be fixed if we figure out a solution.
+		// or not. This should be fixed if we figure out a solution.\
+		//
+		// Since we know this is a new network, don't return here in order to avoid sync issues
+		// also, snap sync is being marked as done by setting it to 0
 		if atomic.LoadUint32(&h.snapSync) == 1 {
 			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
+			atomic.StoreUint32(&h.snapSync, 0)
+			//return 0, nil
 		}
+
 		if h.merger.TDDReached() {
 			// The blocks from the p2p network is regarded as untrusted
 			// after the transition. In theory block gossip should be disabled
@@ -255,12 +277,31 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			}
 			return 0, nil
 		}
-		n, err := h.chain.InsertChain(blocks)
+
+		prev := h.privateChain.Length() - h.chain.Length()
+
+		n, err := h.chain.InsertChain(blocks) // append block to public chain
+
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}
+
+		if h.minerStrategy.IsSelfish() {
+			selfish.OnOthersFoundBlock(prev, h.chain, h.privateChain, h.privateBranchLength, h.nextToPublish, h.eventMux)
+		}
+
 		return n, err
 	}
+
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			if h.chain != nil {
+				h.chain.Print()
+			}
+		}
+	}()
+
 	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock, heighter, nil, inserter, h.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {

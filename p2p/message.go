@@ -95,6 +95,7 @@ type MsgReadWriter interface {
 	MsgWriter
 }
 
+// #-# sends a node
 // Send writes an RLP-encoded message with the given code.
 // data should encode as an RLP list.
 func Send(w MsgWriter, msgcode uint64, data interface{}) error {

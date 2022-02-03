@@ -19,6 +19,8 @@ package miner
 import (
 	"bytes"
 	"errors"
+	"github.com/ethereum/go-ethereum/miner/selfish"
+	log2 "log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -123,24 +125,31 @@ type intervalAdjust struct {
 // worker is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type worker struct {
-	config      *Config
-	chainConfig *params.ChainConfig
-	engine      consensus.Engine
-	eth         Backend
-	chain       *core.BlockChain
-	merger      *consensus.Merger
+	config       *Config
+	chainConfig  *params.ChainConfig // chain config for chain
+	engine       consensus.Engine    // engine for chain
+	eth          Backend
+	publicChain  *core.BlockChain
+	privateChain *core.BlockChain
+	chain        *core.BlockChain // chain that the worker is working on (privateChain for selfish miner, publicChain for honest miner)
+
+	privateBranchLength *int
+	nextToPublish       *int
+	minerStrategy       Strategy
+	merger              *consensus.Merger
 
 	// Feeds
 	pendingLogsFeed event.Feed
 
 	// Subscriptions
-	mux          *event.TypeMux
-	txsCh        chan core.NewTxsEvent
-	txsSub       event.Subscription
-	chainHeadCh  chan core.ChainHeadEvent
-	chainHeadSub event.Subscription
-	chainSideCh  chan core.ChainSideEvent
-	chainSideSub event.Subscription
+	mux                *event.TypeMux
+	txsCh              chan core.NewTxsEvent
+	txsSub             event.Subscription
+	chainHeadCh        chan core.ChainHeadEvent
+	chainHeadSub       event.Subscription
+	chainSideCh        chan core.ChainSideEvent
+	chainSideSub       event.Subscription
+	publicChainBlockCh chan core.ChainBlockEvent
 
 	// Channels
 	newWorkCh          chan *newWorkReq
@@ -193,34 +202,54 @@ type worker struct {
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, merger *consensus.Merger) *worker {
 	worker := &worker{
-		config:             config,
-		chainConfig:        chainConfig,
-		engine:             engine,
-		eth:                eth,
-		mux:                mux,
-		chain:              eth.BlockChain(),
-		merger:             merger,
-		isLocalBlock:       isLocalBlock,
-		localUncles:        make(map[common.Hash]*types.Block),
-		remoteUncles:       make(map[common.Hash]*types.Block),
-		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
-		pendingTasks:       make(map[common.Hash]*task),
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),
-		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize),
-		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize),
-		newWorkCh:          make(chan *newWorkReq),
-		taskCh:             make(chan *task),
-		resultCh:           make(chan *types.Block, resultQueueSize),
-		exitCh:             make(chan struct{}),
-		startCh:            make(chan struct{}, 1),
-		resubmitIntervalCh: make(chan time.Duration),
-		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
+		config:              config,
+		eth:                 eth,
+		mux:                 mux,
+		publicChain:         eth.BlockChain(),
+		privateChain:        config.PrivateChain,
+		privateBranchLength: config.PrivateBranchLength,
+		nextToPublish:       config.NextToPublish,
+		minerStrategy:       config.MinerStrategy,
+		merger:              merger,
+		isLocalBlock:        isLocalBlock,
+		localUncles:         make(map[common.Hash]*types.Block),
+		remoteUncles:        make(map[common.Hash]*types.Block),
+		pendingTasks:        make(map[common.Hash]*task),
+		txsCh:               make(chan core.NewTxsEvent, txChanSize),
+		chainHeadCh:         make(chan core.ChainHeadEvent, chainHeadChanSize),
+		chainSideCh:         make(chan core.ChainSideEvent, chainSideChanSize),
+		publicChainBlockCh:  make(chan core.ChainBlockEvent, chainHeadChanSize+chainSideChanSize),
+		newWorkCh:           make(chan *newWorkReq),
+		taskCh:              make(chan *task),
+		resultCh:            make(chan *types.Block, resultQueueSize),
+		exitCh:              make(chan struct{}),
+		startCh:             make(chan struct{}, 1),
+		resubmitIntervalCh:  make(chan time.Duration),
+		resubmitAdjustCh:    make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
+
+	if worker.minerStrategy.IsHonest() {
+		worker.chain = worker.publicChain
+		worker.chainConfig = chainConfig
+		worker.engine = engine
+	} else {
+		worker.chain = worker.privateChain
+		worker.chainConfig = config.PrivateChainConfig
+		worker.engine = config.PrivateChainEngine
+	}
+
+	worker.unconfirmed = newUnconfirmedBlocks(worker.chain, miningLogAtDepth)
+
 	// Subscribe NewTxsEvent for tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
 	// Subscribe events for blockchain
-	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
-	worker.chainSideSub = eth.BlockChain().SubscribeChainSideEvent(worker.chainSideCh)
+	worker.chainHeadSub = worker.chain.SubscribeChainHeadEvent(worker.chainHeadCh)
+	worker.chainSideSub = worker.chain.SubscribeChainSideEvent(worker.chainSideCh)
+
+	// selfish miner needs to subscribe to block event of the public chain because all new blocks from public chain are possible uncles
+	if worker.minerStrategy.IsSelfish() {
+		worker.publicChain.SetChainBlockEventSubscription(worker.publicChainBlockCh)
+	}
 
 	// Sanitize recommit interval if the user-specified one is too short.
 	recommit := worker.config.Recommit
@@ -466,43 +495,10 @@ func (w *worker) mainLoop() {
 			w.commitNewWork(req.interrupt, req.noempty, req.timestamp)
 
 		case ev := <-w.chainSideCh:
-			// Short circuit for duplicate side blocks
-			if _, exist := w.localUncles[ev.Block.Hash()]; exist {
-				continue
-			}
-			if _, exist := w.remoteUncles[ev.Block.Hash()]; exist {
-				continue
-			}
-			// Add side block to possible uncle block set depending on the author.
-			if w.isLocalBlock != nil && w.isLocalBlock(ev.Block.Header()) {
-				w.localUncles[ev.Block.Hash()] = ev.Block
-			} else {
-				w.remoteUncles[ev.Block.Hash()] = ev.Block
-			}
-			// If our mining block contains less than 2 uncle blocks,
-			// add the new uncle block if valid and regenerate a mining block.
-			if w.isRunning() && w.current != nil && w.current.uncles.Cardinality() < 2 {
-				start := time.Now()
-				if err := w.commitUncle(w.current, ev.Block.Header()); err == nil {
-					var uncles []*types.Header
-					w.current.uncles.Each(func(item interface{}) bool {
-						hash, ok := item.(common.Hash)
-						if !ok {
-							return false
-						}
-						uncle, exist := w.localUncles[hash]
-						if !exist {
-							uncle, exist = w.remoteUncles[hash]
-						}
-						if !exist {
-							return false
-						}
-						uncles = append(uncles, uncle.Header())
-						return false
-					})
-					w.commit(uncles, nil, true, start)
-				}
-			}
+			w.onReceivedBlock(ev.Block)
+
+		case ev := <-w.publicChainBlockCh:
+			w.onReceivedBlock(ev.Block)
 
 		case ev := <-w.txsCh:
 			// Apply transactions to the pending state if we're not mining.
@@ -555,6 +551,46 @@ func (w *worker) mainLoop() {
 	}
 }
 
+func (w *worker) onReceivedBlock(block *types.Block) {
+	// Short circuit for duplicate side blocks
+	if _, exist := w.localUncles[block.Hash()]; exist {
+		return
+	}
+	if _, exist := w.remoteUncles[block.Hash()]; exist {
+		return
+	}
+	// Add side block to possible uncle block set depending on the author.
+	if w.isLocalBlock != nil && w.isLocalBlock(block.Header()) {
+		w.localUncles[block.Hash()] = block
+	} else {
+		w.remoteUncles[block.Hash()] = block
+	}
+	// If our mining block contains less than 2 uncle blocks,
+	// add the new uncle block if valid and regenerate a mining block.
+	if w.isRunning() && w.current != nil && w.current.uncles.Cardinality() < 2 {
+		start := time.Now()
+		if err := w.commitUncle(w.current, block.Header()); err == nil {
+			var uncles []*types.Header
+			w.current.uncles.Each(func(item interface{}) bool {
+				hash, ok := item.(common.Hash)
+				if !ok {
+					return false
+				}
+				uncle, exist := w.localUncles[hash]
+				if !exist {
+					uncle, exist = w.remoteUncles[hash]
+				}
+				if !exist {
+					return false
+				}
+				uncles = append(uncles, uncle.Header())
+				return false
+			})
+			w.commit(uncles, nil, true, start)
+		}
+	}
+}
+
 // taskLoop is a standalone goroutine to fetch sealing task from the generator and
 // push them to consensus engine.
 func (w *worker) taskLoop() {
@@ -572,6 +608,7 @@ func (w *worker) taskLoop() {
 		}
 	}
 	for {
+		// #-# control task channel in order to mine on custom block (like block from own chain)
 		select {
 		case task := <-w.taskCh:
 			if w.newTaskHook != nil {
@@ -593,6 +630,7 @@ func (w *worker) taskLoop() {
 			w.pendingTasks[sealHash] = task
 			w.pendingMu.Unlock()
 
+			// #-# this is where we start mining on a new block and pass in our own result channel
 			if err := w.engine.Seal(w.chain, task.block, w.resultCh, stopCh); err != nil {
 				log.Warn("Block sealing failed", "err", err)
 				w.pendingMu.Lock()
@@ -617,6 +655,7 @@ func (w *worker) resultLoop() {
 			if block == nil {
 				continue
 			}
+
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
 				continue
@@ -658,21 +697,28 @@ func (w *worker) resultLoop() {
 				}
 				logs = append(logs, receipt.Logs...)
 			}
+
+			prev := w.privateChain.Length() - w.publicChain.Length()
+
 			// Commit block and state to database.
 			_, err := w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
 			}
+
 			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
+			log2.Printf("Successfully sealed new block %d", block.Number())
 
-			// Broadcast the block and announce chain insertion event
-			w.mux.Post(core.NewMinedBlockEvent{Block: block})
-
+			if w.minerStrategy.IsHonest() {
+				// Broadcast the block and announce chain insertion event
+				w.mux.Post(core.NewMinedBlockEvent{Block: block})
+			} else {
+				selfish.OnFoundBlock(prev, w.publicChain, w.privateChain, w.privateBranchLength, w.nextToPublish, w.mux)
+			}
 			// Insert the block into the set of pending ones to resultLoop for confirmations
 			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
-
 		case <-w.exitCh:
 			return
 		}
@@ -1035,7 +1081,21 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	// Deep copy receipts here to avoid interaction between different tasks.
 	receipts := copyReceipts(w.current.receipts)
 	s := w.current.state.Copy()
-	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, uncles, receipts)
+
+	var filteredUncles []*types.Header
+
+	switch w.minerStrategy {
+	case SelfishOwnUncles:
+		for _, uncle := range uncles {
+			if w.isLocalBlock(uncle) {
+				filteredUncles = append(filteredUncles, uncle)
+			}
+		}
+	case SelfishAllUncles, HONEST:
+		filteredUncles = uncles
+	}
+
+	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, filteredUncles, receipts)
 	if err != nil {
 		return err
 	}
@@ -1051,10 +1111,11 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 			interval()
 		}
 		select {
+		// #-# control what block gets passed as block to be mined on (like private chain)
 		case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
 			w.unconfirmed.Shift(block.NumberU64() - 1)
 			log.Info("Commit new mining work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
-				"uncles", len(uncles), "txs", w.current.tcount,
+				"uncles", len(filteredUncles), "txs", w.current.tcount,
 				"gas", block.GasUsed(), "fees", totalFees(block, receipts),
 				"elapsed", common.PrettyDuration(time.Since(start)))
 

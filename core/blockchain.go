@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	log2 "log"
 	"math/big"
 	"sort"
 	"sync"
@@ -209,6 +210,8 @@ type BlockChain struct {
 	processor  Processor // Block transaction processor interface
 	forker     *ForkChoice
 	vmConfig   vm.Config
+
+	chainBlockEventChannel chan ChainBlockEvent
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -404,6 +407,38 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		}()
 	}
 	return bc, nil
+}
+
+func (bc *BlockChain) SetTo(toCopy *BlockChain) {
+	bc.Reset()
+
+	for number := 1; number <= int(toCopy.CurrentBlock().NumberU64()); number++ {
+		hashes := rawdb.ReadAllHashes(toCopy.db, uint64(number))
+
+		for _, hash := range hashes {
+			block := toCopy.GetBlock(hash, uint64(number))
+			bc.InsertChain(types.Blocks{block})
+		}
+	}
+}
+
+func (bc *BlockChain) Length() int {
+	return int(bc.CurrentBlock().NumberU64())
+}
+
+func (bc *BlockChain) Print() {
+	chain := "["
+	for i := 1; i <= int(bc.CurrentBlock().NumberU64()); i++ {
+		block := bc.GetBlockByNumber(uint64(i))
+		if block != nil {
+			address := string(block.Coinbase().Hex()[len(block.Coinbase().Hex())-1])
+			chain += address
+			chain += ", "
+		}
+	}
+	chain += "]"
+	log2.Printf(chain)
+	log2.Printf("----------")
 }
 
 // empty returns an indicator whether the blockchain is empty.
@@ -1305,9 +1340,15 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 		// event here.
 		if emitHeadEvent {
 			bc.chainHeadFeed.Send(ChainHeadEvent{Block: block})
+			if bc.chainBlockEventChannel != nil {
+				bc.chainBlockEventChannel <- ChainBlockEvent{Block: block}
+			}
 		}
 	} else {
 		bc.chainSideFeed.Send(ChainSideEvent{Block: block})
+		if bc.chainBlockEventChannel != nil {
+			bc.chainBlockEventChannel <- ChainBlockEvent{Block: block}
+		}
 	}
 	return status, nil
 }
@@ -1391,6 +1432,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 	defer func() {
 		if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
 			bc.chainHeadFeed.Send(ChainHeadEvent{lastCanon})
+			if bc.chainBlockEventChannel != nil {
+				bc.chainBlockEventChannel <- ChainBlockEvent{Block: lastCanon}
+			}
 		}
 	}()
 	// Start the parallel header verifier
@@ -2056,6 +2100,9 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 	if len(oldChain) > 0 {
 		for i := len(oldChain) - 1; i >= 0; i-- {
 			bc.chainSideFeed.Send(ChainSideEvent{Block: oldChain[i]})
+			if bc.chainBlockEventChannel != nil {
+				bc.chainBlockEventChannel <- ChainBlockEvent{Block: oldChain[i]}
+			}
 		}
 	}
 	return nil
@@ -2101,6 +2148,9 @@ func (bc *BlockChain) SetChainHead(newBlock *types.Block) error {
 		bc.logsFeed.Send(logs)
 	}
 	bc.chainHeadFeed.Send(ChainHeadEvent{Block: newBlock})
+	if bc.chainBlockEventChannel != nil {
+		bc.chainBlockEventChannel <- ChainBlockEvent{Block: newBlock}
+	}
 	log.Info("Set the chain head", "number", newBlock.Number(), "hash", newBlock.Hash())
 	return nil
 }

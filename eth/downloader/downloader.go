@@ -20,6 +20,9 @@ package downloader
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/miner/selfish"
+	log2 "log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -107,8 +110,12 @@ type Downloader struct {
 	syncStatsChainHeight uint64       // Highest block number known when syncing started
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
-	lightchain LightChain
-	blockchain BlockChain
+	lightchain          LightChain
+	blockchain          *core.BlockChain
+	privateChain        *core.BlockChain
+	privateBranchLength *int
+	nextToPublish       *int
+	selfish             bool
 
 	// Callbacks
 	dropPeer peerDropFn // Drops a peer for misbehaving
@@ -201,23 +208,31 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, nil, nil, false, lightchain, dropPeer)
+}
+
+func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, privateChain *core.BlockChain, privateBranchLength *int, nextToPublish *int, selfish bool, lightchain LightChain, dropPeer peerDropFn) *Downloader {
 	if lightchain == nil {
 		lightchain = chain
 	}
 	dl := &Downloader{
-		stateDB:        stateDb,
-		mux:            mux,
-		checkpoint:     checkpoint,
-		queue:          newQueue(blockCacheMaxItems, blockCacheInitialItems),
-		peers:          newPeerSet(),
-		blockchain:     chain,
-		lightchain:     lightchain,
-		dropPeer:       dropPeer,
-		headerProcCh:   make(chan *headerTask, 1),
-		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb),
-		stateSyncStart: make(chan *stateSync),
+		stateDB:             stateDb,
+		mux:                 mux,
+		checkpoint:          checkpoint,
+		queue:               newQueue(blockCacheMaxItems, blockCacheInitialItems),
+		peers:               newPeerSet(),
+		blockchain:          chain,
+		privateChain:        privateChain,
+		privateBranchLength: privateBranchLength,
+		nextToPublish:       nextToPublish,
+		selfish:             selfish,
+		lightchain:          lightchain,
+		dropPeer:            dropPeer,
+		headerProcCh:        make(chan *headerTask, 1),
+		quitCh:              make(chan struct{}),
+		SnapSyncer:          snap.NewSyncer(stateDb),
+		stateSyncStart:      make(chan *stateSync),
 	}
 	go dl.stateFetcher()
 	return dl
@@ -1358,6 +1373,7 @@ func (d *Downloader) processFullSyncContent() error {
 }
 
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
+	log2.Printf("importBlockResults, size: %d", len(results))
 	// Check for any early termination requests
 	if len(results) == 0 {
 		return nil
@@ -1377,6 +1393,9 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 	}
+
+	prev := d.privateChain.Length() - d.blockchain.Length()
+
 	// Downloaded blocks are always regarded as trusted after the
 	// transition. Because the downloaded chain is guided by the
 	// consensus-layer.
@@ -1392,6 +1411,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
+
+	if d.selfish {
+		selfish.OnImportedBlocks(blocks, prev, d.blockchain, d.privateChain, d.privateBranchLength, d.nextToPublish, d.mux)
+	}
+
 	return nil
 }
 
