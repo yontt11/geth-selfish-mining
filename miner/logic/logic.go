@@ -58,10 +58,7 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 		return
 	}
 
-	//log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
-	//	"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
-
-	data.PublicChain.Print()
+	data.PublicChain.Print("public")
 
 	if data.MinerStrategy.IsHonest() {
 		// Broadcast the block and announce chain insertion event
@@ -84,24 +81,16 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 	}
 }
 
-// OnOthersFoundBlocks called when we one block is propagated to us or when we fetch multiple blocks
 func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
-	for _, block := range blocks {
-		n, err := onOthersFoundBlock(block, data)
-		if err != nil {
-			return n, err
-		}
+	if len(blocks) == 1 {
+		log2.Printf("OnOthersFoundBlocks(): %d", blocks[0].NumberU64())
+	} else {
+		log2.Printf("OnOthersFoundBlocks(): %d to %d", blocks[0].NumberU64(), blocks[len(blocks)-1].NumberU64())
 	}
-	return 0, nil
-
-}
-
-func onOthersFoundBlock(block *types.Block, data *MiningData) (int, error) {
-	log2.Printf("OnOthersFoundBlock(): %d from %s", block.NumberU64(), block.Coinbase().Hex())
 	prev := data.PrivateChain.Length() - data.PublicChain.Length()
 
 	// insert into public chain
-	n, err := data.PublicChain.InsertChain(types.Blocks{block})
+	n, err := data.PublicChain.InsertChain(blocks)
 	if err != nil {
 		return n, err
 	}
@@ -110,6 +99,7 @@ func onOthersFoundBlock(block *types.Block, data *MiningData) (int, error) {
 		return 0, nil
 	}
 
+	log2.Printf("nextToPublish: %d", *data.NextToPublish)
 	// selfish miner applies selfish mining strategy
 	if prev <= 0 {
 		// if this method is called while SetTo is still running, prev is less than 0 because SetTo resets the
@@ -119,12 +109,14 @@ func onOthersFoundBlock(block *types.Block, data *MiningData) (int, error) {
 		log2.Printf("set private chain to public chain")
 		data.PrivateChain.SetTo(data.PublicChain)
 		*data.PrivateBranchLength = 0
-		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
-		// publish block in case eclipsed peer doesn't have it
-		publishBlock(block, data.PublicChain, data.EventMux)
+		*data.NextToPublish = int(data.PublicChain.CurrentBlock().NumberU64()) + 1 // use public chain current block in case set to is not yet
+		// publish blocks in case eclipsed peer doesn't have it
+		for _, block := range blocks {
+			publishBlock(block, data.PublicChain, data.EventMux)
+		}
 	} else if prev == 1 {
-		// publish last block of the private chain
-		log2.Printf("publish last block of the private chain")
+		// publish last blocks of the private chain
+		log2.Printf("publish last blocks of the private chain")
 		publishBlock(data.PrivateChain.CurrentBlock(), data.PublicChain, data.EventMux)
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
 	} else if prev == 2 {
@@ -137,12 +129,14 @@ func onOthersFoundBlock(block *types.Block, data *MiningData) (int, error) {
 		*data.PrivateBranchLength = 0
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
 	} else { // pev > 2
-		// publish first unpublished block in private block.
-		log2.Printf("publish first unpublished block in private block")
+		// publish first unpublished blocks in private blocks.
+		log2.Printf("publish first unpublished blocks in private blocks")
 		firstUnpublishedBlock := data.PrivateChain.GetBlockByNumber(uint64(*data.NextToPublish))
 		publishBlock(firstUnpublishedBlock, data.PublicChain, data.EventMux)
 		*data.NextToPublish++
 	}
+
+	data.PrivateChain.Print("private")
 
 	return 0, nil
 }

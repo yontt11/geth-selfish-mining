@@ -427,8 +427,8 @@ func (bc *BlockChain) Length() int {
 	return int(bc.CurrentBlock().NumberU64())
 }
 
-func (bc *BlockChain) Print() {
-	chain := "["
+func (bc *BlockChain) Print(name string) {
+	chain := name + ": ["
 	for i := 1; i <= int(bc.CurrentBlock().NumberU64()); i++ {
 		block := bc.GetBlockByNumber(uint64(i))
 		if block != nil {

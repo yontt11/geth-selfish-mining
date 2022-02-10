@@ -281,7 +281,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 
 		// log current public chain and balance
-		h.chain.Print()
+		h.chain.Print("public")
 		stateDB, err := h.chain.State()
 		if err == nil {
 			log2.Printf("balance: %d", stateDB.GetBalance(h.miningData.Coinbase))
