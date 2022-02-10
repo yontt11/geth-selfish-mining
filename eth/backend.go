@@ -20,6 +20,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/miner/logic"
 	"math/big"
 	"runtime"
 	"sync"
@@ -227,6 +228,14 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	nextToPublish := 1
 	nextToPublishPointer := &nextToPublish
 
+	miningData := &logic.MiningData{
+		PublicChain:         eth.blockchain,
+		PrivateChain:        privateChain,
+		PrivateBranchLength: privateBranchLengthPointer,
+		NextToPublish:       nextToPublishPointer,
+		MinerStrategy:       config.Miner.MinerStrategy,
+	}
+
 	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
@@ -242,20 +251,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	if eth.handler, err = newHandler(&handlerConfig{
-		Database:            chainDb,
-		Chain:               eth.blockchain,
-		PrivateChain:        privateChain,
-		PrivateBranchLength: privateBranchLengthPointer,
-		NextToPublish:       nextToPublishPointer,
-		MinerStrategy:       config.Miner.MinerStrategy,
-		TxPool:              eth.txPool,
-		Merger:              merger,
-		Network:             config.NetworkId,
-		Sync:                config.SyncMode,
-		BloomCache:          uint64(cacheLimit),
-		EventMux:            eth.eventMux,
-		Checkpoint:          checkpoint,
-		Whitelist:           config.Whitelist,
+		Database:   chainDb,
+		Chain:      eth.blockchain,
+		MiningData: miningData,
+		TxPool:     eth.txPool,
+		Merger:     merger,
+		Network:    config.NetworkId,
+		Sync:       config.SyncMode,
+		BloomCache: uint64(cacheLimit),
+		EventMux:   eth.eventMux,
+		Checkpoint: checkpoint,
+		Whitelist:  config.Whitelist,
 	}); err != nil {
 		return nil, err
 	}
@@ -265,6 +271,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	config.Miner.PrivateBranchLength = privateBranchLengthPointer
 	config.Miner.NextToPublish = nextToPublishPointer
 	config.Miner.PrivateChainEngine = privateEngine
+	config.Miner.MiningData = miningData
 
 	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock, merger)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))

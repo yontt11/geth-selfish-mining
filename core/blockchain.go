@@ -24,6 +24,7 @@ import (
 	log2 "log"
 	"math/big"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -436,9 +437,8 @@ func (bc *BlockChain) Print() {
 			chain += ", "
 		}
 	}
-	chain += "]"
+	chain += "]" + " (" + strconv.Itoa(bc.Length()) + ")"
 	log2.Printf(chain)
-	log2.Printf("----------")
 }
 
 // empty returns an indicator whether the blockchain is empty.

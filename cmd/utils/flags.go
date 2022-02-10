@@ -20,6 +20,7 @@ package utils
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"github.com/ethereum/go-ethereum/miner/logic"
 	"io"
 	"io/ioutil"
 	log2 "log"
@@ -491,7 +492,10 @@ var (
 		Name:  "miner.logFile",
 		Usage: "Path of the file where the logs will be written to",
 	}
-
+	MinerEclipsePeersFlag = cli.StringFlag{
+		Name:  "miner.eclipse",
+		Usage: "comma separated list of enode urls of peers that this miner is supposed to eclipse",
+	}
 	// Account settings
 	UnlockedAccountFlag = cli.StringFlag{
 		Name:  "unlock",
@@ -1418,7 +1422,10 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Noverify = ctx.GlobalBool(MinerNoVerifyFlag.Name)
 	}
 	if ctx.GlobalIsSet(MinerStrategyFlag.Name) {
-		cfg.MinerStrategy = miner.Strategy(ctx.GlobalInt(MinerStrategyFlag.Name))
+		cfg.MinerStrategy = logic.Strategy(ctx.GlobalInt(MinerStrategyFlag.Name))
+	}
+	if ctx.GlobalIsSet(MinerEclipsePeersFlag.Name) {
+		cfg.EclipsePeers = strings.Split(ctx.GlobalString(MinerEclipsePeersFlag.Name), ",")
 	}
 	if ctx.GlobalIsSet(MinerLogFileFlag.Name) {
 		minerLogFile := ctx.GlobalString(MinerLogFileFlag.Name)
