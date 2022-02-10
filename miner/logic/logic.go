@@ -132,6 +132,7 @@ func onOthersFoundBlock(block *types.Block, data *MiningData) (int, error) {
 			block := data.PrivateChain.GetBlockByNumber(uint64(number))
 			publishBlock(block, data.PublicChain, data.EventMux)
 		}
+		*data.PrivateBranchLength = 0
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
 	} else { // pev > 2
 		// publish first unpublished block in private block.
@@ -158,8 +159,8 @@ func postMinedEvent(block *types.Block, mux *event.TypeMux) {
 }
 
 func Contains(array []string, val string) bool {
-	for _, enode := range array {
-		if enode == val {
+	for _, element := range array {
+		if element == val {
 			return true
 		}
 	}
