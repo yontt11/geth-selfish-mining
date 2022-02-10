@@ -87,8 +87,10 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 // OnOthersFoundBlocks called when we one block is propagated to us or when we fetch multiple blocks
 func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 	for _, block := range blocks {
-
-		onOthersFoundBlock(block, data)
+		n, err := onOthersFoundBlock(block, data)
+		if err != nil {
+			return n, err
+		}
 	}
 	return 0, nil
 
