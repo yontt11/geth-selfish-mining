@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/miner/selfish"
+	"github.com/ethereum/go-ethereum/miner/logic"
 	log2 "log"
 	"math/big"
 	"sync"
@@ -110,12 +110,9 @@ type Downloader struct {
 	syncStatsChainHeight uint64       // Highest block number known when syncing started
 	syncStatsLock        sync.RWMutex // Lock protecting the sync stats fields
 
-	lightchain          LightChain
-	blockchain          *core.BlockChain
-	privateChain        *core.BlockChain
-	privateBranchLength *int
-	nextToPublish       *int
-	selfish             bool
+	lightchain LightChain
+	blockchain *core.BlockChain
+	miningData *logic.MiningData
 
 	// Callbacks
 	dropPeer peerDropFn // Drops a peer for misbehaving
@@ -209,30 +206,27 @@ type BlockChain interface {
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
 func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, lightchain LightChain, dropPeer peerDropFn) *Downloader {
-	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, nil, nil, false, lightchain, dropPeer)
+	return NewWithPrivateChain(checkpoint, stateDb, mux, chain, nil, lightchain, dropPeer)
 }
 
-func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, privateChain *core.BlockChain, privateBranchLength *int, nextToPublish *int, selfish bool, lightchain LightChain, dropPeer peerDropFn) *Downloader {
+func NewWithPrivateChain(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain *core.BlockChain, miningData *logic.MiningData, lightchain LightChain, dropPeer peerDropFn) *Downloader {
 	if lightchain == nil {
 		lightchain = chain
 	}
 	dl := &Downloader{
-		stateDB:             stateDb,
-		mux:                 mux,
-		checkpoint:          checkpoint,
-		queue:               newQueue(blockCacheMaxItems, blockCacheInitialItems),
-		peers:               newPeerSet(),
-		blockchain:          chain,
-		privateChain:        privateChain,
-		privateBranchLength: privateBranchLength,
-		nextToPublish:       nextToPublish,
-		selfish:             selfish,
-		lightchain:          lightchain,
-		dropPeer:            dropPeer,
-		headerProcCh:        make(chan *headerTask, 1),
-		quitCh:              make(chan struct{}),
-		SnapSyncer:          snap.NewSyncer(stateDb),
-		stateSyncStart:      make(chan *stateSync),
+		stateDB:        stateDb,
+		mux:            mux,
+		checkpoint:     checkpoint,
+		queue:          newQueue(blockCacheMaxItems, blockCacheInitialItems),
+		peers:          newPeerSet(),
+		blockchain:     chain,
+		miningData:     miningData,
+		lightchain:     lightchain,
+		dropPeer:       dropPeer,
+		headerProcCh:   make(chan *headerTask, 1),
+		quitCh:         make(chan struct{}),
+		SnapSyncer:     snap.NewSyncer(stateDb),
+		stateSyncStart: make(chan *stateSync),
 	}
 	go dl.stateFetcher()
 	return dl
@@ -1338,7 +1332,7 @@ func (d *Downloader) processHeaders(origin uint64, td *big.Int) error {
 				hashes = hashes[limit:]
 				origin += uint64(limit)
 			}
-			// Update the highest block number we know if a higher one is found.
+			// Update tzhe highest block number we know if a higher one is found.
 			d.syncStatsLock.Lock()
 			if d.syncStatsChainHeight < origin {
 				d.syncStatsChainHeight = origin - 1
@@ -1394,13 +1388,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 	}
 
-	prev := d.privateChain.Length() - d.blockchain.Length()
+	index, err := logic.OnOthersFoundBlocks(blocks, d.miningData)
 
-	// Downloaded blocks are always regarded as trusted after the
-	// transition. Because the downloaded chain is guided by the
-	// consensus-layer.
-	if index, err := d.blockchain.InsertChain(blocks); err != nil {
+	if err != nil {
 		if index < len(results) {
+
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		} else {
 			// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
@@ -1410,10 +1402,6 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
-	}
-
-	if d.selfish {
-		selfish.OnImportedBlocks(blocks, prev, d.blockchain, d.privateChain, d.privateBranchLength, d.nextToPublish, d.mux)
 	}
 
 	return nil

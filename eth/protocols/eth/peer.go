@@ -274,7 +274,6 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 	}
 }
 
-// #-#
 // SendNewBlock propagates an entire block to a remote peer.
 func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	// Mark all the block hash as known, but ensure we don't overflow our limits

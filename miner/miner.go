@@ -19,6 +19,7 @@ package miner
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/miner/logic"
 	"math/big"
 	"sync"
 	"time"
@@ -41,23 +42,6 @@ type Backend interface {
 	TxPool() *core.TxPool
 }
 
-type Strategy int
-
-const (
-	HONEST Strategy = iota
-	SelfishNoUncles
-	SelfishOwnUncles
-	SelfishAllUncles
-)
-
-func (s Strategy) IsSelfish() bool {
-	return s != HONEST
-}
-
-func (s Strategy) IsHonest() bool {
-	return s == HONEST
-}
-
 // Config is the configuration parameters of mining.
 type Config struct {
 	Etherbase           common.Address `toml:",omitempty"` // Public address for block mining rewards (default = first account)
@@ -69,12 +53,14 @@ type Config struct {
 	GasPrice            *big.Int       // Minimum gas price for mining a transaction
 	Recommit            time.Duration  // The time interval for miner to re-create mining work.
 	Noverify            bool           // Disable remote mining solution verification(only useful in ethash).
-	MinerStrategy       Strategy       // Strategy the miner should use
+	MinerStrategy       logic.Strategy // Strategy the miner should use
+	EclipsePeers        []string
 	PrivateChain        *core.BlockChain
 	PrivateChainConfig  *params.ChainConfig
 	PrivateChainEngine  consensus.Engine
 	PrivateBranchLength *int
 	NextToPublish       *int
+	MiningData          *logic.MiningData
 }
 
 // Miner creates blocks and searches for proof-of-work values.

@@ -133,6 +133,7 @@ var (
 		utils.MinerNoVerifyFlag,
 		utils.MinerStrategyFlag,
 		utils.MinerLogFileFlag,
+		utils.MinerEclipsePeersFlag,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV5Flag,

@@ -19,8 +19,7 @@ package miner
 import (
 	"bytes"
 	"errors"
-	"github.com/ethereum/go-ethereum/miner/selfish"
-	log2 "log"
+	"github.com/ethereum/go-ethereum/miner/logic"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -135,7 +134,7 @@ type worker struct {
 
 	privateBranchLength *int
 	nextToPublish       *int
-	minerStrategy       Strategy
+	minerStrategy       logic.Strategy
 	merger              *consensus.Merger
 
 	// Feeds
@@ -198,6 +197,8 @@ type worker struct {
 	skipSealHook func(*task) bool                   // Method to decide whether skipping the sealing.
 	fullTaskHook func()                             // Method to call before pushing the full sealing task.
 	resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
+
+	MiningData *logic.MiningData
 }
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, merger *consensus.Merger) *worker {
@@ -210,6 +211,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		privateBranchLength: config.PrivateBranchLength,
 		nextToPublish:       config.NextToPublish,
 		minerStrategy:       config.MinerStrategy,
+		MiningData:          config.MiningData,
 		merger:              merger,
 		isLocalBlock:        isLocalBlock,
 		localUncles:         make(map[common.Hash]*types.Block),
@@ -276,6 +278,7 @@ func (w *worker) setEtherbase(addr common.Address) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.coinbase = addr
+	w.MiningData.Coinbase = addr
 }
 
 func (w *worker) setGasCeil(ceil uint64) {
@@ -608,7 +611,6 @@ func (w *worker) taskLoop() {
 		}
 	}
 	for {
-		// #-# control task channel in order to mine on custom block (like block from own chain)
 		select {
 		case task := <-w.taskCh:
 			if w.newTaskHook != nil {
@@ -632,7 +634,6 @@ func (w *worker) taskLoop() {
 
 			// #-# this is where we start mining on a new block and pass in our own result channel
 			if err := w.engine.Seal(w.chain, task.block, w.resultCh, stopCh); err != nil {
-				log.Warn("Block sealing failed", "err", err)
 				w.pendingMu.Lock()
 				delete(w.pendingTasks, sealHash)
 				w.pendingMu.Unlock()
@@ -660,6 +661,7 @@ func (w *worker) resultLoop() {
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
 				continue
 			}
+
 			var (
 				sealhash = w.engine.SealHash(block.Header())
 				hash     = block.Hash()
@@ -698,25 +700,8 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 
-			prev := w.privateChain.Length() - w.publicChain.Length()
+			logic.OnFoundBlock(w.MiningData, block, receipts, logs, task.state)
 
-			// Commit block and state to database.
-			_, err := w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
-			if err != nil {
-				log.Error("Failed writing block to chain", "err", err)
-				continue
-			}
-
-			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
-				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
-			log2.Printf("Successfully sealed new block %d", block.Number())
-
-			if w.minerStrategy.IsHonest() {
-				// Broadcast the block and announce chain insertion event
-				w.mux.Post(core.NewMinedBlockEvent{Block: block})
-			} else {
-				selfish.OnFoundBlock(prev, w.publicChain, w.privateChain, w.privateBranchLength, w.nextToPublish, w.mux)
-			}
 			// Insert the block into the set of pending ones to resultLoop for confirmations
 			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
 		case <-w.exitCh:
@@ -1085,13 +1070,13 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	var filteredUncles []*types.Header
 
 	switch w.minerStrategy {
-	case SelfishOwnUncles:
+	case logic.SelfishOwnUncles:
 		for _, uncle := range uncles {
 			if w.isLocalBlock(uncle) {
 				filteredUncles = append(filteredUncles, uncle)
 			}
 		}
-	case SelfishAllUncles, HONEST:
+	case logic.SelfishAllUncles, logic.HONEST:
 		filteredUncles = uncles
 	}
 
