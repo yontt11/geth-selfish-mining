@@ -109,7 +109,7 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		log2.Printf("set private chain to public chain")
 		data.PrivateChain.SetTo(data.PublicChain)
 		*data.PrivateBranchLength = 0
-		*data.NextToPublish = int(data.PublicChain.CurrentBlock().NumberU64()) + 1 // use public chain current block in case set to is not yet
+		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1 // use public chain current block in case set to is not yet
 		// publish blocks in case eclipsed peer doesn't have it
 		for _, block := range blocks {
 			publishBlock(block, data.PublicChain, data.EventMux)
