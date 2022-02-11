@@ -99,7 +99,6 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		return 0, nil
 	}
 
-	log2.Printf("nextToPublish: %d", *data.NextToPublish)
 	// selfish miner applies selfish mining strategy
 	if prev <= 0 {
 		// if this method is called while SetTo is still running, prev is less than 0 because SetTo resets the
@@ -115,8 +114,8 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 			publishBlock(block, data.PublicChain, data.EventMux)
 		}
 	} else if prev == 1 {
-		// publish last blocks of the private chain
-		log2.Printf("publish last blocks of the private chain")
+		// publish last block of the private chain
+		log2.Printf("publish last block of the private chain")
 		publishBlock(data.PrivateChain.CurrentBlock(), data.PublicChain, data.EventMux)
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
 	} else if prev == 2 {
@@ -129,8 +128,8 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		*data.PrivateBranchLength = 0
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
 	} else { // pev > 2
-		// publish first unpublished blocks in private blocks.
-		log2.Printf("publish first unpublished blocks in private blocks")
+		// publish first unpublished block in private blocks.
+		log2.Printf("publish first unpublished block of private chain")
 		firstUnpublishedBlock := data.PrivateChain.GetBlockByNumber(uint64(*data.NextToPublish))
 		publishBlock(firstUnpublishedBlock, data.PublicChain, data.EventMux)
 		*data.NextToPublish++
