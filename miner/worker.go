@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"errors"
 	"github.com/ethereum/go-ethereum/miner/logic"
-	log2 "log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -1082,8 +1081,6 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	case logic.SelfishAllUncles, logic.HONEST:
 		filteredUncles = uncles
 	}
-
-	log2.Printf("uncle length: %d", len(filteredUncles))
 
 	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, filteredUncles, receipts)
 	if err != nil {
