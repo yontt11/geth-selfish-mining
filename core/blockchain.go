@@ -441,6 +441,13 @@ func (bc *BlockChain) Print(name string) {
 	log2.Printf(chain)
 }
 
+func (bc *BlockChain) PrintBalance(coinbase common.Address) {
+	stateDB, err := bc.State()
+	if err == nil {
+		log2.Printf("balance: %d", stateDB.GetBalance(coinbase))
+	}
+}
+
 // empty returns an indicator whether the blockchain is empty.
 // Note, it's a special case that we connect a non-empty ancient
 // database with an empty node, so that we can plugin the ancient

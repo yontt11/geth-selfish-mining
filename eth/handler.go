@@ -19,7 +19,6 @@ package eth
 import (
 	"errors"
 	"github.com/ethereum/go-ethereum/miner/logic"
-	log2 "log"
 	"math"
 	"math/big"
 	"sync"
@@ -278,13 +277,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		}
-
-		// log current public chain and balance
-		h.chain.Print("public")
-		stateDB, err := h.chain.State()
-		if err == nil {
-			log2.Printf("balance: %d", stateDB.GetBalance(h.miningData.Coinbase))
 		}
 
 		return n, err
