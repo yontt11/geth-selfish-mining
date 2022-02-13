@@ -1425,7 +1425,12 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.MinerStrategy = logic.Strategy(ctx.GlobalInt(MinerStrategyFlag.Name))
 	}
 	if ctx.GlobalIsSet(MinerEclipsePeersFlag.Name) {
-		cfg.EclipsePeers = strings.Split(ctx.GlobalString(MinerEclipsePeersFlag.Name), ",")
+		eclipsePeers := ctx.GlobalString(MinerEclipsePeersFlag.Name)
+		if eclipsePeers == "" {
+			cfg.EclipsePeers = nil
+		} else {
+			cfg.EclipsePeers = strings.Split(eclipsePeers, ",")
+		}
 	}
 	if ctx.GlobalIsSet(MinerLogFileFlag.Name) {
 		minerLogFile := ctx.GlobalString(MinerLogFileFlag.Name)

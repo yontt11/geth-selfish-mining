@@ -34,6 +34,7 @@ type MiningData struct {
 	NextToPublish       *int
 	MinerStrategy       Strategy
 	Coinbase            common.Address
+	EclipsePeers        []string
 	EventMux            *event.TypeMux
 }
 
@@ -92,11 +93,6 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		log2.Printf("OnOthersFoundBlocks(): %d to %d", blocks[0].NumberU64(), blocks[len(blocks)-1].NumberU64())
 	}
 
-	if data.MinerStrategy.IsSelfish() {
-		data.PrivateChain.Print("private")
-	}
-	data.PublicChain.Print("public")
-
 	prev := data.PrivateChain.Length() - data.PublicChain.Length()
 
 	// insert into public chain
@@ -121,10 +117,11 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		data.PrivateChain.SetTo(data.PublicChain)
 		*data.PrivateBranchLength = 0
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1 // use public chain current block in case set to is not yet
-		// if these blocks didn't cme from an eclipsed peer, publish them to eclipsed peers
+		// if these blocks didn't come from an eclipsed peer, publish them to eclipsed peers
 		for _, block := range blocks {
 			publishBlock(block, data.PublicChain, data.EventMux)
 		}
+
 	} else if prev == 1 {
 		// publish last block of the private chain
 		log2.Printf("publish last block of the private chain")

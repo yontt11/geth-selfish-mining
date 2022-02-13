@@ -78,18 +78,17 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	Database     ethdb.Database   // Database for direct sync insertions
-	Chain        *core.BlockChain // Blockchain to serve data from
-	MiningData   *logic.MiningData
-	EclipsePeers []string
-	TxPool       txPool                    // Transaction pool to propagate from
-	Merger       *consensus.Merger         // The manager for eth1/2 transition
-	Network      uint64                    // Network identifier to adfvertise
-	Sync         downloader.SyncMode       // Whether to snap or full sync
-	BloomCache   uint64                    // Megabytes to alloc for snap sync bloom
-	EventMux     *event.TypeMux            // Legacy event mux, deprecate for `feed`
-	Checkpoint   *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
-	Whitelist    map[uint64]common.Hash    // Hard coded whitelist for sync challenged
+	Database   ethdb.Database   // Database for direct sync insertions
+	Chain      *core.BlockChain // Blockchain to serve data from
+	MiningData *logic.MiningData
+	TxPool     txPool                    // Transaction pool to propagate from
+	Merger     *consensus.Merger         // The manager for eth1/2 transition
+	Network    uint64                    // Network identifier to adfvertise
+	Sync       downloader.SyncMode       // Whether to snap or full sync
+	BloomCache uint64                    // Megabytes to alloc for snap sync bloom
+	EventMux   *event.TypeMux            // Legacy event mux, deprecate for `feed`
+	Checkpoint *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
+	Whitelist  map[uint64]common.Hash    // Hard coded whitelist for sync challenged
 }
 
 type handler struct {
@@ -102,11 +101,10 @@ type handler struct {
 	checkpointNumber uint64      // Block number for the sync progress validator to cross reference
 	checkpointHash   common.Hash // Block hash for the sync progress validator to cross reference
 
-	database     ethdb.Database
-	txpool       txPool
-	chain        *core.BlockChain
-	miningData   *logic.MiningData
-	eclipsePeers []string
+	database   ethdb.Database
+	txpool     txPool
+	chain      *core.BlockChain
+	miningData *logic.MiningData
 
 	maxPeers int
 
@@ -139,18 +137,17 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 
 	h := &handler{
-		networkID:    config.Network,
-		forkFilter:   forkid.NewFilter(config.Chain),
-		eventMux:     config.EventMux,
-		database:     config.Database,
-		txpool:       config.TxPool,
-		chain:        config.Chain,
-		miningData:   config.MiningData,
-		eclipsePeers: config.EclipsePeers,
-		peers:        newPeerSet(),
-		merger:       config.Merger,
-		whitelist:    config.Whitelist,
-		quitSync:     make(chan struct{}),
+		networkID:  config.Network,
+		forkFilter: forkid.NewFilter(config.Chain),
+		eventMux:   config.EventMux,
+		database:   config.Database,
+		txpool:     config.TxPool,
+		chain:      config.Chain,
+		miningData: config.MiningData,
+		peers:      newPeerSet(),
+		merger:     config.Merger,
+		whitelist:  config.Whitelist,
+		quitSync:   make(chan struct{}),
 	}
 
 	h.miningData.EventMux = h.eventMux
@@ -585,7 +582,7 @@ func (h *handler) broadcastBlock(block *types.Block, propagate bool, ourBlock bo
 		peers = nil
 		for _, peer := range peersWithoutBlock {
 			// if this block is not our own mined block, don't propagate to our eclipsed victims
-			if !logic.Contains(h.eclipsePeers, peer.Info().Enode) {
+			if !logic.Contains(h.miningData.EclipsePeers, peer.Info().Enode) {
 				peers = append(peers, peer)
 			}
 		}

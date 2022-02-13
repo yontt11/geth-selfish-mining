@@ -234,6 +234,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		PrivateBranchLength: privateBranchLengthPointer,
 		NextToPublish:       nextToPublishPointer,
 		MinerStrategy:       config.Miner.MinerStrategy,
+		EclipsePeers:        config.Miner.EclipsePeers,
 	}
 
 	eth.bloomIndexer.Start(eth.blockchain)
