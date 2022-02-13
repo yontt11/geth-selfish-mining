@@ -58,8 +58,6 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 		return
 	}
 
-	data.PublicChain.Print("public")
-
 	if data.MinerStrategy.IsHonest() {
 		// Broadcast the block and announce chain insertion event
 		postMinedEvent(block, data.EventMux)
