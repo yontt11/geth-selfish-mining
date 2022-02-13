@@ -410,16 +410,52 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	return bc, nil
 }
 
+type BranchesContainer struct {
+	Branches []types.Blocks
+}
+
+func NewBranchesContainer() *BranchesContainer {
+	var branches []types.Blocks
+	return &BranchesContainer{
+		Branches: branches,
+	}
+}
+
+func (container *BranchesContainer) AddBranch(branch types.Blocks) {
+	container.Branches = append(container.Branches, branch)
+}
+
 func (bc *BlockChain) SetTo(toCopy *BlockChain) {
+	log2.Printf("start set to")
 	bc.Reset()
+	container := NewBranchesContainer()
+	toCopy.GetAllBranches(bc.genesisBlock, types.Blocks{}, container)
+	for _, branch := range container.Branches {
+		bc.InsertChain(branch)
+	}
+	log2.Printf("end set to")
+}
 
-	for number := 1; number <= int(toCopy.CurrentBlock().NumberU64()); number++ {
-		hashes := rawdb.ReadAllHashes(toCopy.db, uint64(number))
-
-		for _, hash := range hashes {
-			block := toCopy.GetBlock(hash, uint64(number))
-			bc.InsertChain(types.Blocks{block})
+func (bc *BlockChain) GetAllBranches(block *types.Block, branch types.Blocks, container *BranchesContainer) {
+	if block.NumberU64() > 0 { // no need to add genesis block to branch
+		branch = append(branch, block)
+	}
+	var children types.Blocks
+	for _, hash := range rawdb.ReadAllHashes(bc.db, block.NumberU64()+1) {
+		possibleChild := bc.GetBlock(hash, block.NumberU64()+1)
+		if possibleChild.ParentHash() == block.Hash() {
+			children = append(children, possibleChild)
 		}
+	}
+
+	if len(children) == 0 {
+		// branch is complete, add it to the other branches
+		container.AddBranch(branch)
+		return
+	}
+
+	for _, child := range children {
+		bc.GetAllBranches(child, branch, container)
 	}
 }
 
@@ -428,7 +464,7 @@ func (bc *BlockChain) Length() int {
 }
 
 func (bc *BlockChain) Print(name string) {
-	chain := name + ": ["
+	chain := name + " ["
 	for i := 1; i <= int(bc.CurrentBlock().NumberU64()); i++ {
 		block := bc.GetBlockByNumber(uint64(i))
 		if block != nil {
@@ -439,6 +475,21 @@ func (bc *BlockChain) Print(name string) {
 	}
 	chain += "]" + " (" + strconv.Itoa(bc.Length()) + ")"
 	log2.Printf(chain)
+}
+
+func (bc *BlockChain) PrintAllBranches() {
+	container := NewBranchesContainer()
+	bc.GetAllBranches(bc.genesisBlock, types.Blocks{}, container)
+	for _, branch := range container.Branches {
+		str := "branch: ["
+		for _, block := range branch {
+			address := string(block.Coinbase().Hex()[len(block.Coinbase().Hex())-1])
+			str += address
+			str += ", "
+		}
+		str += "]" + " (" + strconv.Itoa(len(branch)) + ")"
+		log2.Printf(str)
+	}
 }
 
 func (bc *BlockChain) PrintBalance(coinbase common.Address) {

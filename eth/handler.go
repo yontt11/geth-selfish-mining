@@ -557,10 +557,10 @@ func (h *handler) Stop() {
 // BroadcastBlock will either propagate a block to a subset of its peers, or
 // will only announce its availability (depending what's requested).
 func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
-	h.broadcastBlock(block, propagate, false)
+	h.broadcastBlock(block, propagate, true)
 }
 
-func (h *handler) broadcastBlock(block *types.Block, propagate bool, ourBlock bool) {
+func (h *handler) broadcastBlock(block *types.Block, propagate bool, eclipse bool) {
 	// Disable the block propagation if the chain has already entered the PoS
 	// stage. The block propagation is delegated to the consensus layer.
 	if h.merger.PoSFinalized() {
@@ -578,7 +578,7 @@ func (h *handler) broadcastBlock(block *types.Block, propagate bool, ourBlock bo
 
 	var peers = peersWithoutBlock
 
-	if !ourBlock {
+	if eclipse {
 		peers = nil
 		for _, peer := range peersWithoutBlock {
 			// if this block is not our own mined block, don't propagate to our eclipsed victims
@@ -664,8 +664,8 @@ func (h *handler) minedBroadcastLoop() {
 
 	for obj := range h.minedBlockSub.Chan() {
 		if ev, ok := obj.Data.(core.NewMinedBlockEvent); ok {
-			h.broadcastBlock(ev.Block, true, true)  // First propagate block to peers
-			h.broadcastBlock(ev.Block, false, true) // Only then announce to the rest
+			h.broadcastBlock(ev.Block, true, false)  // First propagate block to peers
+			h.broadcastBlock(ev.Block, false, false) // Only then announce to the rest
 		}
 	}
 }

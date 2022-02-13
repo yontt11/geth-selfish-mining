@@ -62,7 +62,7 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 	if data.MinerStrategy.IsHonest() {
 		// Broadcast the block and announce chain insertion event
 		postMinedEvent(block, data.EventMux)
-		data.PublicChain.Print("public")
+		data.PublicChain.Print("public ")
 		data.PublicChain.PrintBalance(data.Coinbase)
 		return
 	}
@@ -82,7 +82,7 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 	}
 
 	data.PrivateChain.Print("private")
-	data.PublicChain.Print("public")
+	data.PublicChain.Print("public ")
 	data.PublicChain.PrintBalance(data.Coinbase)
 }
 
@@ -102,7 +102,7 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 	}
 
 	if data.MinerStrategy.IsHonest() {
-		data.PublicChain.Print("public")
+		data.PublicChain.Print("public ")
 		data.PublicChain.PrintBalance(data.Coinbase)
 		return 0, nil
 	}
@@ -145,7 +145,7 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 	}
 
 	data.PrivateChain.Print("private")
-	data.PublicChain.Print("public")
+	data.PublicChain.Print("public ")
 	data.PublicChain.PrintBalance(data.Coinbase)
 
 	return 0, nil
