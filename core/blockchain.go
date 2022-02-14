@@ -426,17 +426,16 @@ func (container *BranchesContainer) AddBranch(branch types.Blocks) {
 }
 
 func (bc *BlockChain) SetTo(toCopy *BlockChain) {
-	log2.Printf("start set to")
 	bc.Reset()
 	container := NewBranchesContainer()
 	toCopy.GetAllBranches(bc.genesisBlock, types.Blocks{}, container)
 	for _, branch := range container.Branches {
 		bc.InsertChain(branch)
 	}
-	log2.Printf("end set to")
 }
 
 func (bc *BlockChain) GetAllBranches(block *types.Block, branch types.Blocks, container *BranchesContainer) {
+	log2.Printf("branch: %p", &branch)
 	if block.NumberU64() > 0 { // no need to add genesis block to branch
 		branch = append(branch, block)
 	}
