@@ -425,17 +425,28 @@ func (container *BranchesContainer) AddBranch(branch types.Blocks) {
 	container.Branches = append(container.Branches, branch)
 }
 
-func (bc *BlockChain) SetTo(toCopy *BlockChain) {
-	bc.Reset()
-	container := NewBranchesContainer()
-	toCopy.GetAllBranches(bc.genesisBlock, types.Blocks{}, container)
-	for _, branch := range container.Branches {
-		bc.InsertChain(branch)
+func (container *BranchesContainer) AddBranchToExisting(branch types.Blocks) {
+	// try to connect branch to existing branch,
+	// if not possible, create a new branch
+	for i, existingBranch := range container.Branches {
+		if branch[0].ParentHash() == existingBranch[len(existingBranch)-1].Hash() {
+			// connect
+			for _, block := range branch {
+				existingBranch = append(existingBranch, block)
+			}
+			container.Branches[i] = existingBranch
+			return
+		}
 	}
+	// create a new branch
+	container.AddBranch(branch)
+}
+
+func (container *BranchesContainer) Clear() {
+	container.Branches = nil
 }
 
 func (bc *BlockChain) GetAllBranches(block *types.Block, branch types.Blocks, container *BranchesContainer) {
-	log2.Printf("branch: %p", &branch)
 	if block.NumberU64() > 0 { // no need to add genesis block to branch
 		branch = append(branch, block)
 	}

@@ -229,12 +229,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	nextToPublishPointer := &nextToPublish
 
 	miningData := &logic.MiningData{
-		PublicChain:         eth.blockchain,
-		PrivateChain:        privateChain,
-		PrivateBranchLength: privateBranchLengthPointer,
-		NextToPublish:       nextToPublishPointer,
-		MinerStrategy:       config.Miner.MinerStrategy,
-		EclipsePeers:        config.Miner.EclipsePeers,
+		PublicChain:                          eth.blockchain,
+		PrivateChain:                         privateChain,
+		PrivateBranchLength:                  privateBranchLengthPointer,
+		NextToPublish:                        nextToPublishPointer,
+		MinerStrategy:                        config.Miner.MinerStrategy,
+		EclipsePeers:                         config.Miner.EclipsePeers,
+		PublicChainBranchesToImportContainer: core.NewBranchesContainer(),
 	}
 
 	eth.bloomIndexer.Start(eth.blockchain)

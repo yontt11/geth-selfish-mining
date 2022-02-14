@@ -28,38 +28,29 @@ const (
 )
 
 type MiningData struct {
-	PublicChain         *core.BlockChain
-	PrivateChain        *core.BlockChain
-	PrivateBranchLength *int
-	NextToPublish       *int
-	MinerStrategy       Strategy
-	Coinbase            common.Address
-	EclipsePeers        []string
-	EventMux            *event.TypeMux
+	PublicChain                          *core.BlockChain
+	PrivateChain                         *core.BlockChain
+	PrivateBranchLength                  *int
+	NextToPublish                        *int
+	MinerStrategy                        Strategy
+	Coinbase                             common.Address
+	EclipsePeers                         []string
+	EventMux                             *event.TypeMux
+	PublicChainBranchesToImportContainer *core.BranchesContainer // container that holds all branches that private chain needs to import next time it has to be set to public chain
 }
 
 func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB) {
 	log2.Printf("OnFoundBlock: %d", block.NumberU64())
 
-	prev := data.PrivateChain.Length() - data.PublicChain.Length()
-
-	var chain *core.BlockChain
-
-	if data.MinerStrategy.IsSelfish() {
-		chain = data.PrivateChain
-	} else {
-		chain = data.PublicChain
-	}
-
-	// Commit block and state to database.
-	_, err := chain.WriteBlockAndSetHead(block, receipts, logs, state, true)
-	if err != nil {
-		log2.Printf("Failed writing block to chain: %s", err)
-		log.Error("Failed writing block to chain", "err", err)
-		return
-	}
-
 	if data.MinerStrategy.IsHonest() {
+		// Commit block and state to database.
+		_, err := data.PublicChain.WriteBlockAndSetHead(block, receipts, logs, state, true)
+		if err != nil {
+			log2.Printf("Failed writing block to public chain: %s", err)
+			log.Error("Failed writing block to chain", "err", err)
+			return
+		}
+
 		// Broadcast the block and announce chain insertion event
 		postMinedEvent(block, data.EventMux)
 		data.PublicChain.Print("public ")
@@ -68,9 +59,19 @@ func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receip
 	}
 
 	// selfish mining
+
+	// Commit block and state to database.
+	_, err := data.PrivateChain.WriteBlockAndSetHead(block, receipts, logs, state, true)
+	if err != nil {
+		log2.Printf("Failed writing block to private chain: %s", err)
+		log.Error("Failed writing block to chain", "err", err)
+		return
+	}
 	*data.PrivateBranchLength++
 
-	if prev == 0 && *data.PrivateBranchLength == 2 {
+	diff := data.PrivateChain.Length() - data.PublicChain.Length()
+
+	if diff == 1 && *data.PrivateBranchLength == 2 {
 		// publish all of the private chain
 		log2.Printf("publish all of the private chain")
 		for number := *data.NextToPublish; number <= int(data.PrivateChain.CurrentBlock().NumberU64()); number++ {
@@ -93,13 +94,13 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		log2.Printf("OnOthersFoundBlocks(): %d to %d", blocks[0].NumberU64(), blocks[len(blocks)-1].NumberU64())
 	}
 
-	prev := data.PrivateChain.Length() - data.PublicChain.Length()
-
 	// insert into public chain
 	n, err := data.PublicChain.InsertChain(blocks)
 	if err != nil {
 		return n, err
 	}
+
+	data.PublicChainBranchesToImportContainer.AddBranchToExisting(blocks)
 
 	if data.MinerStrategy.IsHonest() {
 		data.PublicChain.Print("public ")
@@ -107,27 +108,34 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		return 0, nil
 	}
 
+	diff := data.PrivateChain.Length() - data.PublicChain.Length()
+
 	// selfish miner applies selfish mining strategy
-	if prev <= 0 {
-		// if this method is called while SetTo is still running, prev is less than 0 because SetTo resets the
-		// private chain before inserting the public chain's blocks into it
-		// Therefore, while SetTo is running, the private chain's length is temporarily shorter
-		// Since prev would technically be zero after SeTo is done, the rules for prev = 0 are being applied
+	if diff < 0 { // private chain shorter than public chain
 		log2.Printf("set private chain to public chain")
-		data.PrivateChain.SetTo(data.PublicChain)
+		// importing public blocks directly into private chain doesn't hurt selfish mining strategy
+		// it is actually needed if private chain is shorter than the public chain (diff < 0)
+		// but this way we won't need to copy the complete chain every time but instead already have all blocks
+		// it also allows us to process possible uncle blocks from the public chain without an additional listener
+		for _, branch := range data.PublicChainBranchesToImportContainer.Branches {
+			_, err = data.PrivateChain.InsertChain(branch)
+			if err != nil {
+				log2.Printf("error inserting branch")
+			}
+		}
+		data.PublicChainBranchesToImportContainer.Clear()
 		*data.PrivateBranchLength = 0
-		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1 // use public chain current block in case set to is not yet
+		*data.NextToPublish = int(data.PublicChain.CurrentBlock().NumberU64()) + 1
 		// if these blocks didn't come from an eclipsed peer, publish them to eclipsed peers
 		for _, block := range blocks {
 			publishBlock(block, data.PublicChain, data.EventMux)
 		}
-
-	} else if prev == 1 {
+	} else if diff == 0 { // private chain and public chain have same length
 		// publish last block of the private chain
 		log2.Printf("publish last block of the private chain")
 		publishBlock(data.PrivateChain.CurrentBlock(), data.PublicChain, data.EventMux)
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
-	} else if prev == 2 {
+	} else if diff == 1 { // private chain is ahead by one
 		// publish all of the private chain
 		log2.Printf("publish all of the private chain")
 		for number := *data.NextToPublish; number <= int(data.PrivateChain.CurrentBlock().NumberU64()); number++ {
@@ -136,8 +144,8 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		}
 		*data.PrivateBranchLength = 0
 		*data.NextToPublish = int(data.PrivateChain.CurrentBlock().NumberU64()) + 1
-	} else { // pev > 2
-		// publish first unpublished block in private blocks.
+	} else { // diff > 1
+		// publish first unpublished block of private chain
 		log2.Printf("publish first unpublished block of private chain")
 		firstUnpublishedBlock := data.PrivateChain.GetBlockByNumber(uint64(*data.NextToPublish))
 		publishBlock(firstUnpublishedBlock, data.PublicChain, data.EventMux)
