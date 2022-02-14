@@ -100,7 +100,7 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 		return n, err
 	}
 
-	data.PublicChainBranchesToImportContainer.AddBranchToExisting(blocks)
+	data.PublicChainBranchesToImportContainer.AddBranch(blocks)
 
 	if data.MinerStrategy.IsHonest() {
 		data.PublicChain.Print("public ")

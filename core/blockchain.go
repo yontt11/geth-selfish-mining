@@ -421,13 +421,13 @@ func NewBranchesContainer() *BranchesContainer {
 	}
 }
 
-func (container *BranchesContainer) AddBranch(branch types.Blocks) {
+func (container *BranchesContainer) AddNewBranch(branch types.Blocks) {
 	container.Branches = append(container.Branches, branch)
 }
 
-func (container *BranchesContainer) AddBranchToExisting(branch types.Blocks) {
-	// try to connect branch to existing branch,
-	// if not possible, create a new branch
+// AddBranch try to connect branch to an existing branch,
+// if not possible, create a new branch
+func (container *BranchesContainer) AddBranch(branch types.Blocks) {
 	for i, existingBranch := range container.Branches {
 		if branch[0].ParentHash() == existingBranch[len(existingBranch)-1].Hash() {
 			// connect
@@ -439,7 +439,7 @@ func (container *BranchesContainer) AddBranchToExisting(branch types.Blocks) {
 		}
 	}
 	// create a new branch
-	container.AddBranch(branch)
+	container.AddNewBranch(branch)
 }
 
 func (container *BranchesContainer) Clear() {
@@ -460,7 +460,7 @@ func (bc *BlockChain) GetAllBranches(block *types.Block, branch types.Blocks, co
 
 	if len(children) == 0 {
 		// branch is complete, add it to the other branches
-		container.AddBranch(branch)
+		container.AddNewBranch(branch)
 		return
 	}
 
