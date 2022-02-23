@@ -581,7 +581,6 @@ func (h *handler) broadcastBlock(block *types.Block, propagate bool, eclipse boo
 	if eclipse {
 		peers = nil
 		for _, peer := range peersWithoutBlock {
-			// if this block is not our own mined block, don't propagate to our eclipsed victims
 			if !logic.Contains(h.miningData.EclipsePeers, peer.Info().Enode) {
 				peers = append(peers, peer)
 			}

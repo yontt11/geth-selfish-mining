@@ -39,7 +39,8 @@ type MiningData struct {
 	PublicChainBranchesToImportContainer *core.BranchesContainer // container that holds all branches that private chain needs to import next time it has to be set to public chain
 }
 
-func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB) {
+func OnFoundBlock(data *MiningData, block *types.Block, receipts []*types.Receipt, logs []*types.Log,
+	state *state.StateDB) {
 	log2.Printf("OnFoundBlock: %d", block.NumberU64())
 
 	if data.MinerStrategy.IsHonest() {
@@ -113,10 +114,6 @@ func OnOthersFoundBlocks(blocks types.Blocks, data *MiningData) (int, error) {
 	// selfish miner applies selfish mining strategy
 	if diff < 0 { // private chain shorter than public chain
 		log2.Printf("set private chain to public chain")
-		// importing public blocks directly into private chain doesn't hurt selfish mining strategy
-		// it is actually needed if private chain is shorter than the public chain (diff < 0)
-		// but this way we won't need to copy the complete chain every time but instead already have all blocks
-		// it also allows us to process possible uncle blocks from the public chain without an additional listener
 		for _, branch := range data.PublicChainBranchesToImportContainer.Branches {
 			_, err = data.PrivateChain.InsertChain(branch)
 			if err != nil {
